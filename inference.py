@@ -8,7 +8,13 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 import config
-from data_structures import KeypointInput, MultiPointOctant, coerce_body_keypoints, compute_octant
+from data_structures import (
+    KeypointInput,
+    MultiPointOctant,
+    coerce_body_keypoints,
+    compute_octant,
+    compute_combination_index,
+)
 from octree_node import ActionTreeNode
 
 
@@ -16,6 +22,7 @@ from octree_node import ActionTreeNode
 class PredictionPathEntry:
     depth: int
     octants: Optional[MultiPointOctant]
+    combination_index: Optional[int]
     resolved_label: Optional[str]
     total_samples: int
 
@@ -42,6 +49,7 @@ def predict_action(root: ActionTreeNode, keypoints: KeypointInput) -> Prediction
         PredictionPathEntry(
             depth=current.depth,
             octants=None,
+            combination_index=None,
             resolved_label=current.resolved_label,
             total_samples=current.total_samples,
         )
@@ -53,6 +61,7 @@ def predict_action(root: ActionTreeNode, keypoints: KeypointInput) -> Prediction
             compute_octant(keypoint_map[name], current.bboxes[name])
             for name in config.KEYPOINT_NAMES
         )
+        combination_index = compute_combination_index(octants)
         child = current.get_child(octants)
         if child is None:
             fallback_triggered = True
@@ -62,6 +71,7 @@ def predict_action(root: ActionTreeNode, keypoints: KeypointInput) -> Prediction
             PredictionPathEntry(
                 depth=current.depth,
                 octants=octants,
+                combination_index=combination_index,
                 resolved_label=current.resolved_label,
                 total_samples=current.total_samples,
             )

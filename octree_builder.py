@@ -14,6 +14,7 @@ from data_structures import (
     MultiPointOctant,
     coerce_body_keypoints,
     compute_octant,
+    compute_combination_index,
 )
 from octree_node import ActionTreeNode
 
@@ -30,25 +31,33 @@ def create_root_node() -> ActionTreeNode:
     return ActionTreeNode(depth=0, bboxes=_create_root_bboxes(), parent=None)
 
 
-def insert_sample(root: ActionTreeNode, keypoints: KeypointInput, label: str) -> ActionTreeNode:
+def insert_sample(root: ActionTreeNode, keypoints: KeypointInput, label: str) -> tuple[ActionTreeNode, list[int]]:
     """
-    将单个样本插入八叉树，返回最终叶节点。
+    将单个样本插入八叉树，返回最终叶节点和每层的组合索引路径。
+    
+    返回:
+        (叶节点, 组合索引列表): 每层的组合索引值
     """
     body = coerce_body_keypoints(keypoints)
     keypoint_map = body.as_dict()
 
     current = root
     current.record_sample(label)
+    
+    combination_indices = []
 
     for _ in range(config.MAX_DEPTH):
         octants: MultiPointOctant = tuple(
             compute_octant(keypoint_map[name], current.bboxes[name])
             for name in config.KEYPOINT_NAMES
         )
+        combination_index = compute_combination_index(octants)
+        combination_indices.append(combination_index)
+        
         current = current.get_or_create_child(octants)
         current.record_sample(label)
 
-    return current
+    return current, combination_indices
 
 
 def finalize_tree(node: ActionTreeNode) -> None:

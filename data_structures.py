@@ -168,6 +168,15 @@ def compute_octant(point: Vector3, bbox: BoundingBox) -> int:
     return octant
 
 
+def compute_combination_index(octants: MultiPointOctant) -> int:
+    """
+    将6个octant值（0-7）直接拼接成一个整数索引。
+    
+    例如：(2, 2, 7, 3, 0, 4) → 227304
+    """
+    return int(''.join(str(octant) for octant in octants))
+
+
 def iterate_keypoints(mapping: MutableMapping[str, T]) -> Iterator[Tuple[str, T]]:
     """
     按 KEYPOINT_NAMES 顺序遍历任意关键点映射。
