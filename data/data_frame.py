@@ -2,6 +2,8 @@ from bvh import Bvh
 import numpy as np
 import math
 
+# 这是标准的 BVH 坐标系：Y 向上，Z 向前，X 向左（右手系）
+
 # 全局变量：缓存解析结果以提高效率
 _bvh_cache = {
     'mocap': None,
