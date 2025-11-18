@@ -31,7 +31,7 @@ def create_root_node() -> ActionTreeNode:
     return ActionTreeNode(depth=0, bboxes=_create_root_bboxes(), parent=None)
 
 
-def insert_sample(root: ActionTreeNode, keypoints: KeypointInput, label: str) -> tuple[ActionTreeNode, list[int]]:
+def insert_sample(root: ActionTreeNode, keypoints: KeypointInput, label: str) -> tuple[ActionTreeNode, list[str]]:
     """
     将单个样本插入八叉树，返回最终叶节点和每层的组合索引路径。
     
@@ -44,7 +44,7 @@ def insert_sample(root: ActionTreeNode, keypoints: KeypointInput, label: str) ->
     current = root
     current.record_sample(label)
     
-    combination_indices = []
+    combination_indices: list[str] = []
 
     for _ in range(config.MAX_DEPTH):
         octants: MultiPointOctant = tuple(

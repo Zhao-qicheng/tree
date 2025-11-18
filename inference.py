@@ -22,7 +22,7 @@ from octree_node import ActionTreeNode
 class PredictionPathEntry:
     depth: int
     octants: Optional[MultiPointOctant]
-    combination_index: Optional[int]
+    combination_index: Optional[str]
     resolved_label: Optional[str]
     total_samples: int
 

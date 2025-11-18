@@ -168,13 +168,13 @@ def compute_octant(point: Vector3, bbox: BoundingBox) -> int:
     return octant
 
 
-def compute_combination_index(octants: MultiPointOctant) -> int:
+def compute_combination_index(octants: MultiPointOctant) -> str:
     """
-    将6个octant值（0-7）直接拼接成一个整数索引。
+    将6个octant值（0-7）直接拼接成固定长度的字符串索引。
     
-    例如：(2, 2, 7, 3, 0, 4) → 227304
+    例如：(2, 2, 7, 3, 0, 4) → "227304"
     """
-    return int(''.join(str(octant) for octant in octants))
+    return ''.join(str(octant) for octant in octants)
 
 
 def iterate_keypoints(mapping: MutableMapping[str, T]) -> Iterator[Tuple[str, T]]:

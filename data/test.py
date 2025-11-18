@@ -82,6 +82,7 @@ def euler_zyx_to_matrix(angles_deg):
     Rx = np.array([[1, 0, 0], [0, cx, -sx], [0, sx, cx]])
     return Rz @ Ry @ Rx
 
+#得到指定帧的关节位置
 def calculate_joint_positions(frame_index):
     """计算指定帧的所有关节位置"""
     cache = load_bvh_file()

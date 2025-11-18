@@ -13,7 +13,7 @@ from pathlib import Path
 
 # 添加data目录到路径
 sys.path.insert(0, str(Path(__file__).parent / "data"))
-from data_frame import get_joint_position
+from data.data_frame import get_joint_position
 
 # BVH关节名称到系统关节名称的映射
 BVH_JOINT_MAPPING: Dict[str, str] = {
@@ -41,7 +41,7 @@ def load_keypoints_from_bvh(frame_index: int, bvh_file: str = 'data/walk.bvh') -
     
     for bvh_name, sys_name in BVH_JOINT_MAPPING.items():
         try:
-            # 获取关节位置（相对于hips，单位：厘米/original）
+            # 获取关节位置（相对于hips，这里单位不明确，不清楚具体比例尺）
             pos = get_joint_position(frame_index, bvh_name, relative_to_hips=True, unit='original')
             keypoints[sys_name] = pos
         except ValueError as e:
