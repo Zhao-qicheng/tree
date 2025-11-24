@@ -13,7 +13,7 @@ from pathlib import Path
 
 # 添加data目录到路径
 sys.path.insert(0, str(Path(__file__).parent / "data"))
-from data.data_frame import get_joint_position
+from data_frame import get_joint_position
 
 # BVH关节名称到系统关节名称的映射
 BVH_JOINT_MAPPING: Dict[str, str] = {
