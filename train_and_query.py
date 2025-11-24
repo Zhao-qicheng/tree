@@ -138,7 +138,7 @@ def main():
     print(f"\n叶负载计数: {leaf_sample_count}")
     
     # 保存模型（使用JSON格式，但文件名保持.pkl以匹配图片中的格式）
-    model_path = Path("决策树.pkl")
+    model_path = Path("tree.pkl")
     #这里这个保存树，
     save_tree(root, str(model_path))
     print(f"构建完成: {len(train_samples)}个样本, 模型保存到 {model_path.absolute()}")

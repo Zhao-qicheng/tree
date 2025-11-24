@@ -1,2 +1,6 @@
 .cursor/
 .idea/
+
+
+# 忽略生成的参数文件
+tree.pkl
