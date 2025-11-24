@@ -74,7 +74,7 @@ def compute_weighted_distance(query_indices: list[str], sample_indices: list[str
     total_layers = max(len(query_indices), len(sample_indices))
     distance = 0
     for depth in range(total_layers):
-        weight = 8 ** (total_layers - depth - 1)
+        weight = 2 ** (total_layers - depth - 1)
         layer_query = query_indices[depth] if depth < len(query_indices) else None
         layer_sample = sample_indices[depth] if depth < len(sample_indices) else None
         layer_diff = _layer_difference(layer_query, layer_sample)
