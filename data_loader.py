@@ -15,15 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / "data"))
 from data_frame import get_joint_position
 
-# BVH关节名称到系统关节名称的映射
-BVH_JOINT_MAPPING: Dict[str, str] = {
-    'Hips': 'hips',
-    'LeftHand': 'left_wrist',
-    'RightHand': 'right_wrist',
-    'Neck': 'neck',
-    'LeftFoot': 'left_ankle',
-    'RightFoot': 'right_ankle',
-}
+import config
 
 
 def load_keypoints_from_bvh(frame_index: int, bvh_file: str = 'data/walk.bvh') -> Dict[str, np.ndarray]:
@@ -35,17 +27,24 @@ def load_keypoints_from_bvh(frame_index: int, bvh_file: str = 'data/walk.bvh') -
         bvh_file: BVH文件路径
     
     返回:
-        包含6个关键点位置的字典，键为系统关节名称，值为numpy数组（单位：厘米）
+        包含6个关键点位置的字典，键为BVH关节名称，值为numpy数组（单位：厘米）
     """
     keypoints = {}
     
-    for bvh_name, sys_name in BVH_JOINT_MAPPING.items():
+    # 直接使用BVH文件中的关节名称
+    for joint_name in config.KEYPOINT_NAMES:
         try:
-            # 获取关节位置（相对于hips，这里单位不明确，不清楚具体比例尺）
-            pos = get_joint_position(frame_index, bvh_name, relative_to_hips=True, unit='original')
-            keypoints[sys_name] = pos
+            # 获取关节位置（相对于Hips），传递bvh_file参数
+            pos = get_joint_position(
+                frame_index, 
+                joint_name, 
+                bvh_file=bvh_file,
+                relative_to_hips=True, 
+                unit='original'
+            )
+            keypoints[joint_name] = pos
         except ValueError as e:
-            raise ValueError(f"无法加载关节 {bvh_name} (系统名称: {sys_name}): {e}")
+            raise ValueError(f"无法加载关节 {joint_name} 从文件 {bvh_file}: {e}")
     
     return keypoints
 

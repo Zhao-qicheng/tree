@@ -30,27 +30,24 @@ def _ensure_vector(values: Sequence[float]) -> Vector3:
 @dataclass
 class BodyKeypoints:
     """
-    关键点坐标集合（相对于 hips 原点）。
+    关键点坐标集合（相对于 Hips 原点）。
 
-    所有坐标均为 3D numpy 向量，并确保 hips 恒为 [0, 0, 0]。
+    所有坐标均为 3D numpy 向量，并确保 Hips 恒为 [0, 0, 0]。
+    字段名使用BVH原始关节名称。
     """
 
-    hips: Vector3
-    left_wrist: Vector3
-    right_wrist: Vector3
-    neck: Vector3
-    left_ankle: Vector3
-    right_ankle: Vector3
+    Hips: Vector3
+    LeftHand: Vector3
+    RightHand: Vector3
+    Neck: Vector3
+    LeftFoot: Vector3
+    RightFoot: Vector3
 
     def as_dict(self) -> Dict[str, Vector3]:
         """以字典形式返回关键点，保持名称顺序与 config.KEYPOINT_NAMES 一致。"""
         return {
-            "hips": self.hips,
-            "left_wrist": self.left_wrist,
-            "right_wrist": self.right_wrist,
-            "neck": self.neck,
-            "left_ankle": self.left_ankle,
-            "right_ankle": self.right_ankle,
+            name: getattr(self, name)
+            for name in config.KEYPOINT_NAMES
         }
 
     def __iter__(self) -> Iterator[Tuple[str, Vector3]]:
@@ -122,15 +119,16 @@ class BoundingBox:
 
 def normalize_to_hips(raw_keypoints: Mapping[str, Sequence[float]]) -> BodyKeypoints:
     """
-    将原始关键点转换为以 hips 为原点的 BodyKeypoints。
+    将原始关键点转换为以 Hips 为原点的 BodyKeypoints。
 
     Args:
-        raw_keypoints: 关键点名称 -> 绝对坐标序列（包含 hips）
+        raw_keypoints: 关键点名称 -> 绝对坐标序列（包含 Hips）
     """
+    hips_name = config.KEYPOINT_NAMES[0]  # 第一个关键点应该是 Hips
     try:
-        hip_vector = _ensure_vector(raw_keypoints["hips"])
+        hip_vector = _ensure_vector(raw_keypoints[hips_name])
     except KeyError as exc:
-        raise KeyError("缺失关键点 hips，无法建立相对坐标系") from exc
+        raise KeyError(f"缺失关键点 {hips_name}，无法建立相对坐标系") from exc
 
     normalized: Dict[str, Vector3] = {}
     for name in config.KEYPOINT_NAMES:
@@ -139,16 +137,10 @@ def normalize_to_hips(raw_keypoints: Mapping[str, Sequence[float]]) -> BodyKeypo
         vec = _ensure_vector(raw_keypoints[name]) - hip_vector
         normalized[name] = vec
 
-    normalized["hips"] = np.zeros(3, dtype=np.float64)
+    normalized[hips_name] = np.zeros(3, dtype=np.float64)
 
-    return BodyKeypoints(
-        hips=normalized["hips"],
-        left_wrist=normalized["left_wrist"],
-        right_wrist=normalized["right_wrist"],
-        neck=normalized["neck"],
-        left_ankle=normalized["left_ankle"],
-        right_ankle=normalized["right_ankle"],
-    )
+    # 动态创建 BodyKeypoints，使用配置中的关键点名称
+    return BodyKeypoints(**{name: normalized[name] for name in config.KEYPOINT_NAMES})
 
 
 def compute_octant(point: Vector3, bbox: BoundingBox) -> int:

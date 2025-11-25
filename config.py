@@ -8,14 +8,14 @@ from __future__ import annotations
 
 from typing import Dict, Tuple
 
-# 关键点名称，决定 BodyKeypoints 的字段顺序以及八分体组合顺序。
+# 关键点名称，直接使用BVH文件中的关节名称
 KEYPOINT_NAMES = (
-    "hips",
-    "left_wrist",
-    "right_wrist",
-    "neck",
-    "left_ankle",
-    "right_ankle",
+    "Hips",
+    "LeftHand",
+    "RightHand",
+    "Neck",
+    "LeftFoot",
+    "RightFoot",
 )
 
 # 八叉树相关配置
@@ -26,7 +26,7 @@ ROOT_BBOX_SIZE: float = 200.0  # 边长（-100到100）
 ROOT_BBOX_HALF_SIZE: float = ROOT_BBOX_SIZE / 2.0
 
 # 每个关键点在根节点的初始包围盒范围（min, max）
-# 采用相对于 hips 原点的标准对称立方体 [-100, 100]^3（单位：厘米）。
+# 采用相对于 Hips 原点的标准对称立方体 [-100, 100]^3（单位：厘米）。
 ROOT_BOUNDING_BOXES: Dict[str, Tuple[Tuple[float, float, float], Tuple[float, float, float]]] = {
     name: (
         (-ROOT_BBOX_HALF_SIZE, -ROOT_BBOX_HALF_SIZE, -ROOT_BBOX_HALF_SIZE),
