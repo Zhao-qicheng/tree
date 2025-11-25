@@ -23,6 +23,7 @@ from octree_builder import (
 from inference import predict_action
 from evaluation import evaluate_accuracy, confusion_matrix
 import config
+from query import query
 
 
 def test_data_loading():
@@ -153,55 +154,6 @@ def test_model_persistence(root):
     
     return loaded_root, model_path
 
-
-def test_inference(root, samples_metadata):
-    """测试5: 动作预测（推理）"""
-    print("\n" + "=" * 80)
-    print("测试5: 动作预测（推理）")
-    print("=" * 80)
-    
-    # 使用训练数据中的一帧进行预测
-    test_frame_idx = 7  # 使用一个未训练过的帧
-    print(f"\n5.1 预测帧 {test_frame_idx} 的动作:")
-    
-    try:
-        test_keypoints = load_keypoints_from_bvh(test_frame_idx, bvh_file='data/walk.bvh')
-        result = predict_action(root, test_keypoints)
-        
-        print(f"   预测标签: {result.label}")
-        print(f"   终止深度: {result.terminated_at_depth}")
-        print(f"   是否触发回退: {result.fallback_triggered}")
-        print(f"   路径长度: {len(result.path)}")
-        
-        # 显示路径信息
-        print("\n   预测路径:")
-        for entry in result.path[:5]:  # 只显示前5层
-            print(f"     深度 {entry.depth}: "
-                  f"索引={entry.combination_index}, "
-                  f"标签={entry.resolved_label}, "
-                  f"样本数={entry.total_samples}")
-        
-        # 计算与训练样本的距离
-        print("\n5.2 计算与训练样本的距离:")
-        query_indices = [
-            entry.combination_index
-            for entry in result.path[1:]
-            if entry.combination_index is not None
-        ]
-        
-        from query import compute_weighted_distance
-        for sample_meta in samples_metadata[:3]:  # 只显示前3个
-            sample_indices = sample_meta.get("combination_indices", [])
-            distance = compute_weighted_distance(
-                query_indices, 
-                list(map(str, sample_indices))
-            )
-            print(f"   与 {sample_meta['sample_name']} 的距离: {distance:.6f}")
-    
-    except Exception as e:
-        print(f"   预测失败: {e}")
-
-
 def test_evaluation(root):
     """测试6: 模型评估"""
     print("\n" + "=" * 80)
@@ -299,10 +251,7 @@ def main():
         
         # 测试4: 模型持久化
         loaded_root, model_path = test_model_persistence(root)
-        
-        # 测试5: 推理
-        test_inference(loaded_root, samples_metadata)
-        
+
         # 测试6: 评估
         test_evaluation(loaded_root)
         
@@ -329,6 +278,8 @@ def main():
         print("\n或者直接使用:")
         print(f"  from query import query")
         print(f"  query(query_frame=7, model_path='{final_model_path}')")
+        print("\n测试查询")
+        query(query_frame=7, model_path='test_tree_final.json')
         
     except Exception as e:
         print(f"\n❌ 测试过程中出现错误: {e}")
