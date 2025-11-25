@@ -13,7 +13,8 @@ from data_structures import BoundingBox, MultiPointOctant
 
 class ActionTreeNode:
     """
-    八叉树节点，维护关键点包围盒、样本统计及子节点。
+    八叉树节点，用于帧检索系统。
+    维护关键点包围盒、帧ID列表及子节点。
     """
 
     __slots__ = (
@@ -21,9 +22,7 @@ class ActionTreeNode:
         "parent",
         "children",
         "bboxes",
-        "sample_counts",
-        "total_samples",
-        "resolved_label",
+        "frame_ids",  # 存储帧ID列表而不是标签统计
     )
 
     def __init__(
@@ -36,9 +35,7 @@ class ActionTreeNode:
         self.parent = parent
         self.children: Dict[MultiPointOctant, ActionTreeNode] = {}
         self.bboxes = bboxes
-        self.sample_counts: Dict[str, int] = defaultdict(int)
-        self.total_samples: int = 0
-        self.resolved_label: Optional[str] = None
+        self.frame_ids: list[str] = []  # 存储落在该节点的所有帧ID
 
     # ======================== 子节点管理 ========================
 
@@ -53,19 +50,19 @@ class ActionTreeNode:
         获取或创建指定八分体组合的子节点。
 
         Args:
-            octants: 多关键点 octant 编码组合，长度与关键点数量一致
+            octants: 多关键点 octant 编码组合，长度与用于八叉树的关键点数量一致（不包括Hips）
         """
         child = self.children.get(octants)
         if child is not None:
             return child
 
-        if len(octants) != len(config.KEYPOINT_NAMES):
+        if len(octants) != len(config.OCTREE_KEYPOINT_NAMES):
             raise ValueError(
-                f"octants 长度应为 {len(config.KEYPOINT_NAMES)}，当前为 {len(octants)}"
+                f"octants 长度应为 {len(config.OCTREE_KEYPOINT_NAMES)}，当前为 {len(octants)}"
             )
 
         child_bboxes: Dict[str, BoundingBox] = {}
-        for idx, name in enumerate(config.KEYPOINT_NAMES):
+        for idx, name in enumerate(config.OCTREE_KEYPOINT_NAMES):
             bbox = self.bboxes[name]
             child_bboxes[name] = bbox.subdivide(octants[idx])
 
@@ -83,39 +80,24 @@ class ActionTreeNode:
     def is_leaf(self) -> bool:
         return not self.children
 
-    # ======================== 样本统计 ========================
+    # ======================== 帧ID管理 ========================
 
-    def record_sample(self, label: str) -> None:
-        """为当前节点记录一个样本标签。"""
-        self.total_samples += 1
-        self.sample_counts[label] += 1
-
-    def resolve_label(self) -> Optional[str]:
-        """
-        根据样本统计确定节点标签。
-
-        返回多数票标签；若无样本则保持原标签。
-        """
-        if not self.sample_counts:
-            return self.resolved_label
-
-        # 多数票，若出现并列则按标签字典序稳定选择。
-        resolved = max(
-            self.sample_counts.items(),
-            key=lambda item: (item[1], item[0]),
-        )[0]
-        self.resolved_label = resolved
-        return resolved
+    def add_frame(self, frame_id: str) -> None:
+        """为当前节点添加一个帧ID。"""
+        if frame_id not in self.frame_ids:
+            self.frame_ids.append(frame_id)
+    
+    def get_frame_ids(self) -> list[str]:
+        """获取当前节点存储的所有帧ID。"""
+        return self.frame_ids
 
     # ======================== 序列化辅助 ========================
 
     def to_serializable(self) -> Dict:
-        """递归生成可 JSON 化字典。"""
+        """递归生成可序列化字典。"""
         return {
             "depth": self.depth,
-            "resolved_label": self.resolved_label,
-            "total_samples": self.total_samples,
-            "sample_counts": dict(self.sample_counts),
+            "frame_ids": self.frame_ids,
             "bboxes": {
                 name: bbox.to_tuple()
                 for name, bbox in self.bboxes.items()
@@ -131,7 +113,7 @@ class ActionTreeNode:
         data: Dict,
         parent: Optional["ActionTreeNode"] = None,
     ) -> "ActionTreeNode":
-        """从 JSON 化字典重建节点。"""
+        """从序列化字典重建节点。"""
         bboxes = {
             name: BoundingBox.from_tuple(values)
             for name, values in data["bboxes"].items()
@@ -141,11 +123,7 @@ class ActionTreeNode:
             bboxes=bboxes,
             parent=parent,
         )
-        node.resolved_label = data.get("resolved_label")
-        node.total_samples = int(data.get("total_samples", 0))
-        node.sample_counts.update(
-            {label: int(count) for label, count in data.get("sample_counts", {}).items()}
-        )
+        node.frame_ids = list(data.get("frame_ids", []))
         for key_str, child_data in data.get("children", {}).items():
             if isinstance(key_str, (list, tuple)):
                 key_tuple = tuple(int(v) for v in key_str)

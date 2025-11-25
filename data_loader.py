@@ -5,15 +5,16 @@
 from __future__ import annotations
 
 from typing import Dict, List, Optional
+from pathlib import Path
+import glob
 
 import numpy as np
 
 import sys
-from pathlib import Path
 
 # 添加data目录到路径
 sys.path.insert(0, str(Path(__file__).parent / "data"))
-from data_frame import get_joint_position
+from data_frame import get_joint_position, get_frame_count
 
 import config
 
@@ -61,4 +62,41 @@ def load_multiple_frames(frame_indices: List[int], bvh_file: str = 'data/walk.bv
         关键点字典列表
     """
     return [load_keypoints_from_bvh(idx, bvh_file) for idx in frame_indices]
+
+
+def load_all_bvh_files(data_dir: str = "data/") -> List[str]:
+    """
+    扫描目录下所有.bvh文件。
+    
+    参数:
+        data_dir: 数据目录路径
+    
+    返回:
+        BVH文件路径列表
+    """
+    data_path = Path(data_dir)
+    if not data_path.exists():
+        raise FileNotFoundError(f"数据目录 {data_dir} 不存在")
+    
+    bvh_files = sorted(glob.glob(str(data_path / "*.bvh")))
+    if not bvh_files:
+        raise FileNotFoundError(f"在 {data_dir} 目录下没有找到BVH文件")
+    
+    return bvh_files
+
+
+def get_bvh_frame_count(bvh_file: str) -> int:
+    """
+    获取BVH文件的总帧数。
+    
+    参数:
+        bvh_file: BVH文件路径
+    
+    返回:
+        总帧数
+    """
+    try:
+        return get_frame_count(bvh_file)
+    except Exception as e:
+        raise ValueError(f"无法获取文件 {bvh_file} 的帧数: {e}")
 

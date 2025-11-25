@@ -275,3 +275,17 @@ def get_all_joints(frame_index, bvh_file='walk.bvh', relative_to_hips=True, unit
         result[joint_name] = pos
     
     return result
+
+
+def get_frame_count(bvh_file='walk.bvh'):
+    """
+    获取BVH文件的总帧数
+    
+    参数:
+        bvh_file: BVH文件路径
+    
+    返回:
+        int: 总帧数
+    """
+    cache = load_bvh_file(bvh_file)
+    return cache['mocap'].nframes

@@ -1,192 +1,211 @@
 """
-查询脚本：加载已训练的八叉树模型并执行动作预测。
+帧检索查询脚本：加载模型并执行相似帧查询。
 """
 
 from __future__ import annotations
 
-import json
+import sys
 from pathlib import Path
-from typing import Any
+from typing import Optional, List
 
 import numpy as np
 
 from data_loader import load_keypoints_from_bvh
-from inference import predict_action
-from octree_builder import load_tree
+from octree_builder import load_tree, load_metadata
+from similarity import find_similar_frames, SimilarityResult
 import config
 
-MODEL_PATH = Path("tree.json")  # 模型文件使用JSON格式
-METADATA_PATH = Path("train_samples.json")
-DEFAULT_BVH_FILE = Path("data/walk.bvh")
-DEFAULT_QUERY_FRAME = 5
 
-
-def print_main_joint_positions(keypoints: dict[str, np.ndarray]) -> None:
+def query_frame(query_keypoints: dict[str, np.ndarray],
+               model_tree_path: str = "model.tree",
+               model_metadata_path: str = "model.pkl",
+               top_k: int = None,
+               verbose: bool = True) -> List[SimilarityResult]:
     """
-    打印主要关节位置信息。
+    执行帧检索查询。
     
     参数:
-        keypoints: 关键点字典，键为关节名称，值为3D坐标numpy数组
-    """
-    print("\n关键点位置（相对于Hips，单位：原始单位）:")
-    print("-" * 80)
-    
-    # 按照配置的顺序打印关键点
-    for joint_name in config.KEYPOINT_NAMES:
-        if joint_name in keypoints:
-            pos = keypoints[joint_name]
-            # 格式化坐标显示
-            print(f"  {joint_name:12s}: X={pos[0]:8.3f}, Y={pos[1]:8.3f}, Z={pos[2]:8.3f}")
-        else:
-            print(f"  {joint_name:12s}: <缺失>")
-    
-    print("-" * 80)
-
-
-def print_combination_indices(combination_indices: list[str], label: str = "层") -> None:
-    """
-    打印组合索引列表，格式化显示每层的索引。
-    
-    参数:
-        combination_indices: 组合索引字符串列表（如 ["227304", "123456", ...]）
-        label: 标签前缀（如 "查询路径层" 或 "训练样本层"）
-    """
-    if not combination_indices:
-        print(f"  {label}: <无索引>")
-        return
-    
-    for idx, combo_idx in enumerate(combination_indices, start=1):
-        if combo_idx:
-            # 格式化显示：每2个字符一组，更容易阅读
-            formatted = " ".join([combo_idx[i:i+2] for i in range(0, len(combo_idx), 2)])
-            print(f"  {label} {idx:2d}: {combo_idx} ({formatted})")
-        else:
-            print(f"  {label} {idx:2d}: <空>")
-
-
-def compute_weighted_distance(
-    query_indices: list[str], 
-    sample_indices: list[str]
-) -> float:
-    """
-    计算两个组合索引列表之间的加权距离。
-    
-    距离计算规则：
-    1. 对于每一层，如果索引相同则距离为0，否则根据差异计算距离
-    2. 越深的层权重越大（距离根节点越远，权重越大）
-    3. 如果列表长度不同，较短的列表在后续层视为最大距离
-    
-    参数:
-        query_indices: 查询路径的组合索引列表
-        sample_indices: 训练样本路径的组合索引列表
+        query_keypoints: 查询帧的关键点坐标
+        model_tree_path: 树模型文件路径
+        model_metadata_path: 元数据文件路径
+        top_k: 返回前K个最相似的帧（默认使用config.TOP_K）
+        verbose: 是否打印详细信息
     
     返回:
-        加权距离值（浮点数），值越小表示越相似
+        相似度结果列表
     """
-    if not query_indices or not sample_indices:
-        # 如果任一列表为空，返回最大距离
-        return float('inf')
+    if top_k is None:
+        top_k = config.TOP_K
     
-    total_distance = 0.0
-    max_length = max(len(query_indices), len(sample_indices))
+    # 1. 加载模型
+    if verbose:
+        print("=" * 80)
+        print("帧检索查询系统")
+        print("=" * 80)
+        print("\n步骤1: 加载模型...")
     
-    # 对每一层计算距离
-    for depth in range(max_length):
-        # 权重：深度越深，权重越大（depth从0开始，所以+1）
-        weight = (depth + 1) ** 2  # 使用平方权重，使得深层差异影响更大
-        
-        if depth >= len(query_indices) or depth >= len(sample_indices):
-            # 如果某一层缺失，视为最大差异
-            # 组合索引是6位数字（0-7），最大差异是每位数都不同，即6位*7=42
-            layer_distance = 6 * 7  # 最大可能的层间距离
-        else:
-            query_idx = query_indices[depth]
-            sample_idx = sample_indices[depth]
-            
-            if query_idx == sample_idx:
-                layer_distance = 0.0
+    tree = load_tree(model_tree_path)
+    metadata_list = load_metadata(model_metadata_path)
+    
+    if verbose:
+        print(f"  成功加载八叉树模型: {model_tree_path}")
+        print(f"  成功加载元数据: {model_metadata_path}")
+        print(f"  训练集帧数: {len(metadata_list)}")
+    
+    # 2. 打印查询帧的关键点信息
+    if verbose:
+        print("\n步骤2: 查询帧关键点位置...")
+        print("-" * 80)
+        for joint_name in config.KEYPOINT_NAMES:
+            if joint_name in query_keypoints:
+                pos = query_keypoints[joint_name]
+                print(f"  {joint_name:12s}: X={pos[0]:8.3f}, Y={pos[1]:8.3f}, Z={pos[2]:8.3f}")
             else:
-                # 计算两个索引字符串的差异
-                # 每个索引是6位数字，每一位的取值范围是0-7
-                layer_distance = 0.0
-                max_len = max(len(query_idx), len(sample_idx))
-                
-                for pos in range(max_len):
-                    q_char = int(query_idx[pos]) if pos < len(query_idx) else 0
-                    s_char = int(sample_idx[pos]) if pos < len(sample_idx) else 0
-                    # 计算每一位的差异
-                    diff = abs(q_char - s_char)
-                    layer_distance += diff
-        
-        total_distance += weight * layer_distance
+                print(f"  {joint_name:12s}: <缺失>")
+        print("-" * 80)
     
-    return total_distance
+    # 3. 查找相似帧
+    if verbose:
+        print(f"\n步骤3: 查找Top-{top_k}相似帧...")
+    
+    results = find_similar_frames(query_keypoints, metadata_list, top_k)
+    
+    # 4. 打印结果
+    if verbose:
+        print("\n查询结果:")
+        print("=" * 80)
+        
+        # 检查是否有精确匹配
+        exact_matches = [r for r in results if r.is_exact_match]
+        if exact_matches:
+            print("\n[精确匹配] 找到完全相同的帧！")
+            print("-" * 80)
+            for i, result in enumerate(exact_matches, 1):
+                print_result(result, i)
+            print("-" * 80)
+        else:
+            print("\n未找到精确匹配，以下是最相似的帧：")
+        
+        # 打印Top-K结果
+        print(f"\nTop-{top_k}最相似的帧:")
+        print("-" * 80)
+        for i, result in enumerate(results, 1):
+            print_result(result, i)
+        print("-" * 80)
+        
+        print("\n说明:")
+        print("  - 距离值: 加权欧氏距离，越小表示越相似")
+        print("  - 相似度: 0-1之间，1表示完全相同，0表示完全不同")
+        print(f"  - 精确匹配阈值: 距离 < {config.EXACT_MATCH_EPSILON}")
+        print("=" * 80)
+    
+    return results
 
 
-def _load_training_metadata(metadata_path: Path) -> list[dict[str, Any]]:
-    if not metadata_path.exists():
-        return []
-    with open(metadata_path, "r", encoding="utf-8") as file:
-        data = json.load(file)
-    samples = data.get("samples", [])
-    if not isinstance(samples, list):
-        return []
-    return samples
+def print_result(result: SimilarityResult, rank: int) -> None:
+    """
+    打印单个查询结果。
+    
+    参数:
+        result: 相似度结果
+        rank: 排名
+    """
+    metadata = result.frame_metadata
+    filename = Path(metadata.bvh_file).name
+    
+    # 格式化输出
+    match_flag = "[精确匹配]" if result.is_exact_match else ""
+    
+    print(f"\n排名 {rank}: {match_flag}")
+    print(f"  文件名: {filename}")
+    print(f"  帧索引: {metadata.frame_index}")
+    print(f"  帧ID: {metadata.frame_id}")
+    print(f"  距离值: {result.distance:.6f}")
+    print(f"  相似度: {result.similarity_score:.4f}")
 
 
-def query(
-    *,
-    query_frame: int = DEFAULT_QUERY_FRAME,
-    bvh_file: str | Path = DEFAULT_BVH_FILE,
-    model_path: str | Path = MODEL_PATH,
-    metadata_path: str | Path = METADATA_PATH,
-) -> None:
-    """对指定帧执行查询。"""
-    model_path = Path(model_path)
-    metadata_path = Path(metadata_path)
-    bvh_file = Path(bvh_file)
+def query_from_bvh(bvh_file: str,
+                  frame_index: int,
+                  model_tree_path: str = "model.tree",
+                  model_metadata_path: str = "model.pkl",
+                  top_k: int = None,
+                  verbose: bool = True) -> List[SimilarityResult]:
+    """
+    从BVH文件加载指定帧并执行查询。
+    
+    参数:
+        bvh_file: BVH文件路径
+        frame_index: 帧索引
+        model_tree_path: 树模型文件路径
+        model_metadata_path: 元数据文件路径
+        top_k: 返回前K个最相似的帧
+        verbose: 是否打印详细信息
+    
+    返回:
+        相似度结果列表
+    """
+    if verbose:
+        print(f"\n从BVH文件加载查询帧...")
+        print(f"  文件: {bvh_file}")
+        print(f"  帧索引: {frame_index}")
+    
+    # 加载关键点
+    keypoints = load_keypoints_from_bvh(frame_index, bvh_file)
+    
+    # 执行查询
+    return query_frame(keypoints, model_tree_path, model_metadata_path, top_k, verbose)
 
-    if not model_path.exists():
-        raise FileNotFoundError(f"模型文件 {model_path} 不存在，请先运行 train.py")
 
-    root = load_tree(str(model_path))
-    query_keypoints = load_keypoints_from_bvh(query_frame, str(bvh_file))
-
-    print("=" * 80)
-    print("开始执行查询...")
-    print("=" * 80)
-    print_main_joint_positions(query_keypoints)
-
-    result = predict_action(root, query_keypoints)
-    predicted_label = result.label
-    print(f"\n预测结果: {predicted_label}")
-
-    query_combination_indices = [
-        entry.combination_index
-        for entry in result.path[1:]  # 跳过根节点
-        if entry.combination_index is not None
-    ]
-
-    print("\n查询路径组合索引:")
-    print_combination_indices(query_combination_indices, "查询路径层")
-
-    samples_meta = _load_training_metadata(metadata_path)
-    if not samples_meta:
-        print("\n未找到训练样本元数据，跳过候选匹配。")
-        return
-
-    print("\n候选匹配结果:")
-    matched_samples: list[tuple[str, float]] = []
-    for sample in samples_meta:
-        combination_indices = sample.get("combination_indices", [])
-        if not isinstance(combination_indices, list):
-            continue
-        sample_name = str(sample.get("sample_name", "unknown"))
-        distance = compute_weighted_distance(
-            query_combination_indices, list(map(str, combination_indices))
+def main():
+    """主函数。"""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="帧检索查询")
+    parser.add_argument("--bvh-file", required=True, help="BVH文件路径")
+    parser.add_argument("--frame-index", type=int, required=True, help="帧索引")
+    parser.add_argument("--model-tree", default="model.tree", help="树模型文件路径")
+    parser.add_argument("--model-metadata", default="model.pkl", help="元数据文件路径")
+    parser.add_argument("--top-k", type=int, default=None, help=f"返回前K个结果（默认{config.TOP_K}）")
+    parser.add_argument("--quiet", action="store_true", help="静默模式")
+    
+    args = parser.parse_args()
+    
+    try:
+        # 检查文件是否存在
+        if not Path(args.bvh_file).exists():
+            print(f"错误: BVH文件不存在: {args.bvh_file}")
+            sys.exit(1)
+        
+        if not Path(args.model_tree).exists():
+            print(f"错误: 树模型文件不存在: {args.model_tree}")
+            print("请先运行 train.py 训练模型")
+            sys.exit(1)
+        
+        if not Path(args.model_metadata).exists():
+            print(f"错误: 元数据文件不存在: {args.model_metadata}")
+            print("请先运行 train.py 训练模型")
+            sys.exit(1)
+        
+        # 执行查询
+        results = query_from_bvh(
+            bvh_file=args.bvh_file,
+            frame_index=args.frame_index,
+            model_tree_path=args.model_tree,
+            model_metadata_path=args.model_metadata,
+            top_k=args.top_k,
+            verbose=not args.quiet
         )
-        matched_samples.append((sample_name, distance))
+        
+        # 如果有精确匹配，返回0；否则返回1
+        has_exact_match = any(r.is_exact_match for r in results)
+        sys.exit(0 if has_exact_match else 1)
+        
+    except Exception as e:
+        print(f"\n错误: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(2)
 
-    matched_samples.sort(key=lambda item: item[1])
-    for sample_name, distance in matched_samples[:5]:
-        print(f"候选 {sample_name} 距离 {distance:.6f}")
+
+if __name__ == "__main__":
+    main()

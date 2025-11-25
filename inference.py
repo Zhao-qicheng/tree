@@ -57,9 +57,10 @@ def predict_action(root: ActionTreeNode, keypoints: KeypointInput) -> Prediction
 
     fallback_triggered = False
     for depth in range(config.MAX_DEPTH):
+        # 只为用于八叉树的关键点计算octant（不包括Hips原点）
         octants: MultiPointOctant = tuple(
             compute_octant(keypoint_map[name], current.bboxes[name])
-            for name in config.KEYPOINT_NAMES
+            for name in config.OCTREE_KEYPOINT_NAMES
         )
         combination_index = compute_combination_index(octants)
         child = current.get_child(octants)

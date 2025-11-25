@@ -3,4 +3,16 @@
 
 
 # 忽略生成的参数文件
-tree.pkl
+model.pkl
+model.tree
+
+
+
+data/
+
+
+
+__pycache__/
+
+
+

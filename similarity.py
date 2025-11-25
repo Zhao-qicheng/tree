@@ -1,0 +1,208 @@
+"""
+相似度计算与Top-K查询逻辑。
+"""
+
+from __future__ import annotations
+
+from typing import List, Tuple, Dict
+from dataclasses import dataclass
+
+import numpy as np
+
+import config
+from data_structures import FrameMetadata, KeypointInput, coerce_body_keypoints
+
+
+@dataclass
+class SimilarityResult:
+    """
+    相似度查询结果。
+    
+    Attributes:
+        frame_metadata: 帧元数据
+        distance: 加权距离值（越小越相似）
+        similarity_score: 相似度得分（0-1之间，1表示完全相同）
+        is_exact_match: 是否为精确匹配
+    """
+    frame_metadata: FrameMetadata
+    distance: float
+    similarity_score: float
+    is_exact_match: bool
+
+
+def compute_weighted_distance(query_keypoints: Dict[str, np.ndarray], 
+                              stored_keypoints: Dict[str, np.ndarray]) -> float:
+    """
+    计算两组关键点之间的加权欧氏距离。
+    
+    使用config.JOINT_WEIGHTS定义的权重，重要关节（如手、脚）权重更高。
+    
+    参数:
+        query_keypoints: 查询帧的关键点坐标字典
+        stored_keypoints: 存储帧的关键点坐标字典
+    
+    返回:
+        加权距离值（越小表示越相似）
+    """
+    total_distance = 0.0
+    
+    # 只计算八叉树使用的关键点（不包括hip原点）
+    for joint_name in config.OCTREE_KEYPOINT_NAMES:
+        if joint_name not in query_keypoints or joint_name not in stored_keypoints:
+            # 如果某个关节缺失，给予最大惩罚
+            total_distance += 1000.0
+            continue
+        
+        # 计算该关节的欧氏距离
+        query_pos = query_keypoints[joint_name]
+        stored_pos = stored_keypoints[joint_name]
+        
+        euclidean_dist = np.linalg.norm(query_pos - stored_pos)
+        
+        # 应用权重
+        weight = config.JOINT_WEIGHTS.get(joint_name, 1.0)
+        weighted_dist = euclidean_dist * weight
+        
+        total_distance += weighted_dist
+    
+    return total_distance
+
+
+def compute_similarity_score(distance: float, max_distance: float = 1000.0) -> float:
+    """
+    将距离转换为相似度得分（0-1之间）。
+    
+    参数:
+        distance: 加权距离值
+        max_distance: 最大距离（用于归一化）
+    
+    返回:
+        相似度得分，1表示完全相同，0表示完全不同
+    """
+    # 使用指数衰减函数
+    # similarity = exp(-distance / scale)
+    scale = max_distance / 10.0  # 调整衰减速度
+    similarity = np.exp(-distance / scale)
+    return float(similarity)
+
+
+def is_exact_match(distance: float, epsilon: float = None) -> bool:
+    """
+    判断是否为精确匹配。
+    
+    参数:
+        distance: 加权距离值
+        epsilon: 精确匹配阈值（默认使用config.EXACT_MATCH_EPSILON）
+    
+    返回:
+        如果距离小于epsilon，则认为是精确匹配
+    """
+    if epsilon is None:
+        epsilon = config.EXACT_MATCH_EPSILON
+    return distance < epsilon
+
+
+def find_similar_frames(query_keypoints: KeypointInput,
+                       metadata_list: List[FrameMetadata],
+                       top_k: int = None) -> List[SimilarityResult]:
+    """
+    在元数据列表中查找与查询帧最相似的K个帧。
+    
+    参数:
+        query_keypoints: 查询帧的关键点坐标
+        metadata_list: 训练集的帧元数据列表
+        top_k: 返回前K个最相似的帧（默认使用config.TOP_K）
+    
+    返回:
+        按相似度排序的结果列表（距离从小到大）
+    """
+    if top_k is None:
+        top_k = config.TOP_K
+    
+    # 标准化查询关键点
+    body = coerce_body_keypoints(query_keypoints)
+    query_keypoint_dict = body.as_dict()
+    
+    # 计算所有帧的距离
+    results: List[SimilarityResult] = []
+    
+    for metadata in metadata_list:
+        # 计算加权距离
+        distance = compute_weighted_distance(query_keypoint_dict, metadata.keypoints)
+        
+        # 计算相似度得分
+        similarity_score = compute_similarity_score(distance)
+        
+        # 判断是否为精确匹配
+        exact_match = is_exact_match(distance)
+        
+        result = SimilarityResult(
+            frame_metadata=metadata,
+            distance=distance,
+            similarity_score=similarity_score,
+            is_exact_match=exact_match
+        )
+        results.append(result)
+    
+    # 按距离排序（从小到大）
+    results.sort(key=lambda x: x.distance)
+    
+    # 返回前K个
+    return results[:top_k]
+
+
+def find_similar_frames_in_candidates(query_keypoints: KeypointInput,
+                                     metadata_list: List[FrameMetadata],
+                                     candidate_frame_ids: List[str],
+                                     top_k: int = None) -> List[SimilarityResult]:
+    """
+    在候选帧ID列表中查找与查询帧最相似的K个帧。
+    
+    这个函数用于在八叉树定位到的候选帧中进行精确匹配。
+    
+    参数:
+        query_keypoints: 查询帧的关键点坐标
+        metadata_list: 完整的帧元数据列表
+        candidate_frame_ids: 候选帧ID列表（从八叉树中获取）
+        top_k: 返回前K个最相似的帧
+    
+    返回:
+        按相似度排序的结果列表
+    """
+    # 创建frame_id到metadata的映射
+    metadata_dict = {m.frame_id: m for m in metadata_list}
+    
+    # 筛选出候选帧的元数据
+    candidate_metadata = [
+        metadata_dict[frame_id]
+        for frame_id in candidate_frame_ids
+        if frame_id in metadata_dict
+    ]
+    
+    # 在候选帧中查找最相似的
+    return find_similar_frames(query_keypoints, candidate_metadata, top_k)
+
+
+def compute_frame_distance_matrix(metadata_list: List[FrameMetadata]) -> np.ndarray:
+    """
+    计算所有帧之间的距离矩阵（用于分析和可视化）。
+    
+    参数:
+        metadata_list: 帧元数据列表
+    
+    返回:
+        距离矩阵，shape为(n_frames, n_frames)
+    """
+    n = len(metadata_list)
+    distance_matrix = np.zeros((n, n), dtype=np.float64)
+    
+    for i in range(n):
+        for j in range(i+1, n):
+            dist = compute_weighted_distance(
+                metadata_list[i].keypoints,
+                metadata_list[j].keypoints
+            )
+            distance_matrix[i, j] = dist
+            distance_matrix[j, i] = dist  # 对称矩阵
+    
+    return distance_matrix
