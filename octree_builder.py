@@ -5,7 +5,12 @@
 from __future__ import annotations
 
 import json
-import pickle
+try:
+    import joblib
+    JOBLIB_AVAILABLE = True
+except ImportError:
+    import pickle
+    JOBLIB_AVAILABLE = False
 from typing import Mapping, List
 from pathlib import Path
 
@@ -73,19 +78,26 @@ def insert_frame(root: ActionTreeNode, keypoints: KeypointInput, frame_id: str) 
 
 def save_tree(root: ActionTreeNode, path: str) -> None:
     """
-    使用pickle保存八叉树到二进制文件。
+    保存八叉树到二进制文件（优先使用joblib，回退到pickle）。
+    
+    joblib对numpy数组和大型对象的序列化更快，并支持压缩。
     
     参数:
         root: 八叉树根节点
         path: 保存路径（.tree文件）
     """
-    with open(path, "wb") as file:
-        pickle.dump(root, file, protocol=pickle.HIGHEST_PROTOCOL)
+    if JOBLIB_AVAILABLE:
+        # 使用joblib保存，compress=3提供平衡的压缩比和速度
+        joblib.dump(root, path, compress=0)
+    else:
+        # 回退到pickle
+        with open(path, "wb") as file:
+            pickle.dump(root, file, protocol=pickle.HIGHEST_PROTOCOL)
 
 
 def load_tree(path: str) -> ActionTreeNode:
     """
-    从pickle文件加载八叉树。
+    从文件加载八叉树（自动检测joblib或pickle格式）。
     
     参数:
         path: 树文件路径（.tree文件）
@@ -93,32 +105,57 @@ def load_tree(path: str) -> ActionTreeNode:
     返回:
         八叉树根节点
     """
-    with open(path, "rb") as file:
-        return pickle.load(file)
+    if JOBLIB_AVAILABLE:
+        try:
+            # 尝试用joblib加载
+            return joblib.load(path)
+        except:
+            # 如果失败（可能是旧的pickle格式），回退到pickle
+            with open(path, "rb") as file:
+                return pickle.load(file)
+    else:
+        # 如果没有joblib，使用pickle
+        with open(path, "rb") as file:
+            return pickle.load(file)
 
 
 def save_metadata(metadata_list: List[FrameMetadata], path: str) -> None:
     """
-    保存帧元数据列表到pkl文件。
+    保存帧元数据列表到文件（优先使用joblib）。
     
     参数:
         metadata_list: 帧元数据列表
         path: 保存路径（.pkl文件）
     """
-    with open(path, "wb") as file:
-        pickle.dump(metadata_list, file, protocol=pickle.HIGHEST_PROTOCOL)
+    if JOBLIB_AVAILABLE:
+        # 使用joblib保存，compress=3提供平衡的压缩比和速度
+        joblib.dump(metadata_list, path, compress=0)
+    else:
+        # 回退到pickle
+        with open(path, "wb") as file:
+            pickle.dump(metadata_list, file, protocol=pickle.HIGHEST_PROTOCOL)
 
 
 def load_metadata(path: str) -> List[FrameMetadata]:
     """
-    从pkl文件加载帧元数据列表。
+    从文件加载帧元数据列表（自动检测格式）。
     
     参数:
-        path: pkl文件路径
+        path: 文件路径
     
     返回:
         帧元数据列表
     """
-    with open(path, "rb") as file:
-        return pickle.load(file)
+    if JOBLIB_AVAILABLE:
+        try:
+            # 尝试用joblib加载
+            return joblib.load(path)
+        except:
+            # 如果失败，回退到pickle
+            with open(path, "rb") as file:
+                return pickle.load(file)
+    else:
+        # 如果没有joblib，使用pickle
+        with open(path, "rb") as file:
+            return pickle.load(file)
 

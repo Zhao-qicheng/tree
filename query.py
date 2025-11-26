@@ -13,8 +13,71 @@ import numpy as np
 
 from data_loader import load_keypoints_from_bvh
 from octree_builder import load_tree, load_metadata
-from similarity import find_similar_frames, SimilarityResult
+from similarity import find_similar_frames, find_similar_frames_in_candidates, SimilarityResult
+from data_structures import coerce_body_keypoints, compute_octant
 import config
+
+
+def find_candidate_frames_from_tree(tree, query_keypoints: dict[str, np.ndarray], 
+                                    min_candidates: int = None) -> List[str]:
+    """
+    利用八叉树空间索引快速查找候选帧ID。
+    
+    通过在八叉树中定位查询帧所在的空间区域，只返回该区域及其邻近区域的帧ID，
+    避免遍历所有训练帧，大幅提升查询性能。
+    
+    参数:
+        tree: 八叉树根节点
+        query_keypoints: 查询帧的关键点坐标字典
+        min_candidates: 最少需要的候选帧数量（默认为top_k的3倍，确保足够的候选）
+    
+    返回:
+        候选帧ID列表
+    """
+    if min_candidates is None:
+        min_candidates = config.TOP_K * 3  # 默认候选数量为top_k的3倍
+    
+    # 1. 转换关键点格式
+    body = coerce_body_keypoints(query_keypoints)
+    keypoint_map = body.as_dict()
+    
+    current = tree
+    
+    # 2. 在八叉树中向下遍历，定位到最匹配的空间区域
+    for _ in range(config.MAX_DEPTH):
+        try:
+            # 计算当前节点的octants（只使用参与八叉树的关键点）
+            octants = tuple(
+                compute_octant(keypoint_map[name], current.bboxes[name])
+                for name in config.OCTREE_KEYPOINT_NAMES
+            )
+            
+            child = current.get_child(octants)
+            
+            # 如果没有匹配的子节点，停止遍历
+            if child is None:
+                break
+            
+            # 继续深入到子节点
+            current = child
+            
+        except Exception:
+            # 如果计算出错（如关键点缺失或包围盒问题），停止遍历
+            break
+    
+    # 3. 获取候选帧ID列表
+    candidates = list(current.get_frame_ids())
+    
+    # 4. 如果候选数量不足，向上回溯父节点扩充候选集
+    # 这确保即使叶节点帧数很少，也能有足够的候选进行比较
+    while len(candidates) < min_candidates and current.parent is not None:
+        current = current.parent
+        # 使用set去重，避免重复添加
+        parent_frames = set(current.get_frame_ids())
+        candidate_set = set(candidates)
+        candidates.extend(parent_frames - candidate_set)
+    
+    return candidates
 
 
 def query_frame(query_keypoints: dict[str, np.ndarray],
@@ -71,21 +134,42 @@ def query_frame(query_keypoints: dict[str, np.ndarray],
                 print(f"  {joint_name:12s}: <缺失>")
         print("-" * 80)
     
-    # 3. 查找相似帧
+    # 3. 使用八叉树索引查找候选帧
     if verbose:
-        print(f"\n步骤3: 查找Top-{top_k}相似帧...")
+        print(f"\n步骤3: 使用八叉树索引定位候选帧...")
     
-    # 开始计时 - 查询
-    query_start_time = time.time()
+    # 开始计时 - 八叉树定位
+    index_start_time = time.time()
     
-    results = find_similar_frames(query_keypoints, metadata_list, top_k)
+    candidate_ids = find_candidate_frames_from_tree(tree, query_keypoints, min_candidates=top_k * 3)
     
-    query_elapsed = time.time() - query_start_time
+    index_elapsed = time.time() - index_start_time
     
     if verbose:
-        print(f"  查询用时: {query_elapsed:.4f} 秒")
+        print(f"  八叉树定位用时: {index_elapsed:.4f} 秒")
+        print(f"  候选帧数量: {len(candidate_ids)} (从 {len(metadata_list)} 帧中筛选)")
+        reduction = (1 - len(candidate_ids) / len(metadata_list)) * 100
+        print(f"  数据量减少: {reduction:.1f}%")
     
-    # 4. 打印结果
+    # 4. 在候选帧中查找最相似的Top-K
+    if verbose:
+        print(f"\n步骤4: 在候选帧中计算精确相似度...")
+    
+    # 开始计时 - 精确计算
+    calc_start_time = time.time()
+    
+    results = find_similar_frames_in_candidates(query_keypoints, metadata_list, candidate_ids, top_k)
+    
+    calc_elapsed = time.time() - calc_start_time
+    
+    # 总查询时间
+    query_elapsed = index_elapsed + calc_elapsed
+    
+    if verbose:
+        print(f"  相似度计算用时: {calc_elapsed:.4f} 秒")
+        print(f"  总查询用时: {query_elapsed:.4f} 秒")
+    
+    # 5. 打印结果
     if verbose:
         print("\n查询结果:")
         print("=" * 80)
@@ -119,10 +203,13 @@ def query_frame(query_keypoints: dict[str, np.ndarray],
         print("  - 距离值: 加权欧氏距离，越小表示越相似")
         print("  - 相似度: 0-1之间，1表示完全相同，0表示完全不同")
         print(f"  - 精确匹配阈值: 距离 < {config.EXACT_MATCH_EPSILON}")
-        print("\n性能:")
+        print("\n性能统计:")
         print(f"  - 加载模型用时: {load_elapsed:.4f} 秒")
-        print(f"  - 查询用时: {query_elapsed:.4f} 秒")
+        print(f"  - 八叉树定位用时: {index_elapsed:.4f} 秒")
+        print(f"  - 相似度计算用时: {calc_elapsed:.4f} 秒")
+        print(f"  - 总查询用时: {query_elapsed:.4f} 秒")
         print(f"  - 总用时: {load_elapsed + query_elapsed:.4f} 秒")
+        print(f"  - 候选帧数量: {len(candidate_ids)}/{len(metadata_list)} ({reduction:.1f}% 减少)")
         print("=" * 80)
     
     return results

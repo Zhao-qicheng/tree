@@ -164,6 +164,13 @@ def train_model(data_dir: str = "data/",
     # 5. 保存模型
     if verbose:
         print("\n步骤5: 保存模型...")
+        
+        # 检查是否使用joblib
+        try:
+            import joblib
+            print("  使用joblib序列化（更快、支持压缩）")
+        except ImportError:
+            print("  使用pickle序列化（建议安装joblib以获得更好性能）")
     
     save_tree(root, model_tree_path)
     if verbose:
