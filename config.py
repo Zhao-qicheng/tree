@@ -39,8 +39,8 @@ OCTREE_KEYPOINT_NAMES = (
 # 八叉树相关配置
 MAX_DEPTH: int = 12
 
-# 根节点包围盒尺寸参数（单位：厘米）
-ROOT_BBOX_SIZE: float = 200.0  # 边长（-100到100）
+# 根节点包围盒尺寸参数（单位：文件中的单位，）
+ROOT_BBOX_SIZE: float = 80.0  # 边长
 ROOT_BBOX_HALF_SIZE: float = ROOT_BBOX_SIZE / 2.0
 
 # 每个关键点在根节点的初始包围盒范围（min, max）

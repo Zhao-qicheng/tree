@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 from typing import List
 
@@ -80,11 +81,18 @@ def train_model(data_dir: str = "data/",
     total_frames = 0
     error_count = 0
     
+    # 记录总开始时间
+    total_start_time = time.time()
+    
     for bvh_file in bvh_files:
         try:
             frame_count = get_bvh_frame_count(bvh_file)
             if verbose:
                 print(f"\n处理文件: {Path(bvh_file).name} ({frame_count} 帧)")
+            
+            # 记录当前文件开始时间
+            file_start_time = time.time()
+            file_frame_count = 0
             
             for frame_index in range(frame_count):
                 try:
@@ -113,6 +121,7 @@ def train_model(data_dir: str = "data/",
                     metadata_list.append(metadata)
                     
                     total_frames += 1
+                    file_frame_count += 1
                     
                     # 每处理100帧打印一次进度
                     if verbose and total_frames % 100 == 0:
@@ -122,6 +131,15 @@ def train_model(data_dir: str = "data/",
                     error_count += 1
                     if verbose:
                         print(f"  警告: 无法加载帧 {frame_index}: {e}")
+            
+            # 文件处理完成，输出该文件用时和总时长
+            file_elapsed = time.time() - file_start_time
+            total_elapsed = time.time() - total_start_time
+            
+            if verbose:
+                print(f"  ✓ 完成 {Path(bvh_file).name}: {file_frame_count} 帧")
+                print(f"  文件用时: {file_elapsed:.2f} 秒 (平均: {file_elapsed/file_frame_count:.4f} 秒/帧)")
+                print(f"  总时长: {total_elapsed:.2f} 秒")
         
         except Exception as e:
             if verbose:

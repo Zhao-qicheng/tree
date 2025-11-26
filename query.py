@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 from typing import Optional, List
 
@@ -44,13 +45,19 @@ def query_frame(query_keypoints: dict[str, np.ndarray],
         print("=" * 80)
         print("\n步骤1: 加载模型...")
     
+    # 开始计时 - 加载模型
+    load_start_time = time.time()
+    
     tree = load_tree(model_tree_path)
     metadata_list = load_metadata(model_metadata_path)
+    
+    load_elapsed = time.time() - load_start_time
     
     if verbose:
         print(f"  成功加载八叉树模型: {model_tree_path}")
         print(f"  成功加载元数据: {model_metadata_path}")
         print(f"  训练集帧数: {len(metadata_list)}")
+        print(f"  加载模型用时: {load_elapsed:.4f} 秒")
     
     # 2. 打印查询帧的关键点信息
     if verbose:
@@ -68,7 +75,15 @@ def query_frame(query_keypoints: dict[str, np.ndarray],
     if verbose:
         print(f"\n步骤3: 查找Top-{top_k}相似帧...")
     
+    # 开始计时 - 查询
+    query_start_time = time.time()
+    
     results = find_similar_frames(query_keypoints, metadata_list, top_k)
+    
+    query_elapsed = time.time() - query_start_time
+    
+    if verbose:
+        print(f"  查询用时: {query_elapsed:.4f} 秒")
     
     # 4. 打印结果
     if verbose:
@@ -97,6 +112,10 @@ def query_frame(query_keypoints: dict[str, np.ndarray],
         print("  - 距离值: 加权欧氏距离，越小表示越相似")
         print("  - 相似度: 0-1之间，1表示完全相同，0表示完全不同")
         print(f"  - 精确匹配阈值: 距离 < {config.EXACT_MATCH_EPSILON}")
+        print("\n性能:")
+        print(f"  - 加载模型用时: {load_elapsed:.4f} 秒")
+        print(f"  - 查询用时: {query_elapsed:.4f} 秒")
+        print(f"  - 总用时: {load_elapsed + query_elapsed:.4f} 秒")
         print("=" * 80)
     
     return results
