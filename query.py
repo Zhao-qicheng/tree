@@ -108,6 +108,13 @@ def query_frame(query_keypoints: dict[str, np.ndarray],
             print_result(result, i)
         print("-" * 80)
         
+        # 打印排名第一的帧的详细坐标对比
+        if results:
+            print("\n" + "=" * 80)
+            print("排名第一的帧详细坐标对比:")
+            print("=" * 80)
+            print_coordinate_comparison(query_keypoints, results[0])
+        
         print("\n说明:")
         print("  - 距离值: 加权欧氏距离，越小表示越相似")
         print("  - 相似度: 0-1之间，1表示完全相同，0表示完全不同")
@@ -141,6 +148,53 @@ def print_result(result: SimilarityResult, rank: int) -> None:
     print(f"  帧ID: {metadata.frame_id}")
     print(f"  距离值: {result.distance:.6f}")
     print(f"  相似度: {result.similarity_score:.4f}")
+
+
+def print_coordinate_comparison(query_keypoints: dict[str, np.ndarray], 
+                               best_match: SimilarityResult) -> None:
+    """
+    打印查询帧与最佳匹配帧的关节坐标对比。
+    
+    参数:
+        query_keypoints: 查询帧的关键点坐标
+        best_match: 最佳匹配结果
+    """
+    matched_keypoints = best_match.frame_metadata.keypoints
+    
+    print("\n关节坐标对比 (查询帧 vs 匹配帧):")
+    print("-" * 120)
+    print(f"{'关节名称':<12} | {'查询帧 X':>12} {'Y':>12} {'Z':>12} | {'匹配帧 X':>12} {'Y':>12} {'Z':>12} | {'差值':>12}")
+    print("-" * 120)
+    
+    total_diff = 0.0
+    for joint_name in config.KEYPOINT_NAMES:
+        if joint_name in query_keypoints and joint_name in matched_keypoints:
+            query_pos = query_keypoints[joint_name]
+            match_pos = matched_keypoints[joint_name]
+            
+            # 计算欧氏距离
+            diff = np.linalg.norm(query_pos - match_pos)
+            total_diff += diff
+            
+            # 格式化输出
+            print(f"{joint_name:<12} | "
+                  f"{query_pos[0]:12.6f} {query_pos[1]:12.6f} {query_pos[2]:12.6f} | "
+                  f"{match_pos[0]:12.6f} {match_pos[1]:12.6f} {match_pos[2]:12.6f} | "
+                  f"{diff:12.6f}")
+        else:
+            print(f"{joint_name:<12} | {'<缺失>':>38} | {'<缺失>':>38} | {'N/A':>12}")
+    
+    print("-" * 120)
+    print(f"{'总欧氏距离':>50}: {total_diff:12.6f}")
+    print(f"{'加权距离(相似度计算用)':>50}: {best_match.distance:12.6f}")
+    
+    # 如果是精确匹配，特别标注
+    if best_match.is_exact_match:
+        print(f"\n✓ 该帧为精确匹配 (加权距离 < {config.EXACT_MATCH_EPSILON})")
+    else:
+        print(f"\n✗ 该帧不是精确匹配 (加权距离 >= {config.EXACT_MATCH_EPSILON})")
+    
+    print("=" * 120)
 
 
 def query_from_bvh(bvh_file: str,
