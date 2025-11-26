@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Dict, Tuple
 
-# 关键点名称，使用BVH文件中的10个关键关节
+# 关键点名称，使用BVH文件中的16个关键关节
 # 这些关节将用于帧检索系统
 KEYPOINT_NAMES = (
     "hip",        # 原点，始终为 [0, 0, 0]
@@ -16,10 +16,16 @@ KEYPOINT_NAMES = (
     "neck",       # 颈部
     "head",       # 头部
     "lShldr",     # 左肩
-    "rShldr",     # 右肩
+    "lForeArm",   # 左前臂
     "lHand",      # 左手
+    "rShldr",     # 右肩
+    "rForeArm",   # 右前臂
     "rHand",      # 右手
+    "lThigh",     # 左大腿
+    "lShin",      # 左小腿
     "lFoot",      # 左脚
+    "rThigh",     # 右大腿
+    "rShin",      # 右小腿
     "rFoot",      # 右脚
 )
 
@@ -29,15 +35,21 @@ OCTREE_KEYPOINT_NAMES = (
     "neck",
     "head",
     "lShldr",
-    "rShldr",
+    "lForeArm",
     "lHand",
+    "rShldr",
+    "rForeArm",
     "rHand",
+    "lThigh",
+    "lShin",
     "lFoot",
+    "rThigh",
+    "rShin",
     "rFoot",
 )
 
 # 八叉树相关配置
-MAX_DEPTH: int = 12
+MAX_DEPTH: int = 15
 
 # 根节点包围盒尺寸参数（单位：文件中的单位，）
 ROOT_BBOX_SIZE: float = 80.0  # 边长
@@ -67,7 +79,7 @@ JSON_INDENT: int = 2
 # 查询配置
 TOP_K: int = 5  # 返回最相似的K个帧
 EXACT_MATCH_EPSILON: float = 0.001  # 精确匹配的距离阈值
-MIN_CANDIDATES: int = 40  # 八叉树查询时的最小候选帧数量（约为总数的1%）
+MIN_CANDIDATES: int = 100  # 八叉树查询时的最小候选帧数量（约为总数的1%）
 
 # 相似度计算权重（可根据关节重要性调整）
 JOINT_WEIGHTS: Dict[str, float] = {
@@ -76,10 +88,16 @@ JOINT_WEIGHTS: Dict[str, float] = {
     "neck": 0.8,
     "head": 0.6,
     "lShldr": 0.8,
+    "lForeArm": 1.0,  # 前臂动作对手势识别重要
+    "lHand": 1.2,     # 手部动作更重要
     "rShldr": 0.8,
-    "lHand": 1.2,  # 手部动作更重要
+    "rForeArm": 1.0,  # 前臂动作对手势识别重要
     "rHand": 1.2,
-    "lFoot": 1.2,  # 脚部动作更重要
+    "lThigh": 1.1,    # 大腿对步态识别重要
+    "lShin": 1.1,     # 小腿对步态识别重要
+    "lFoot": 1.2,     # 脚部动作更重要
+    "rThigh": 1.1,    # 大腿对步态识别重要
+    "rShin": 1.1,     # 小腿对步态识别重要
     "rFoot": 1.2,
 }
 
