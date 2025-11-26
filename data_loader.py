@@ -13,7 +13,7 @@ import numpy as np
 import sys
 
 # 添加data目录到路径
-sys.path.insert(0, str(Path(__file__).parent / "data"))
+sys.path.insert(0, str(Path(__file__).parent / "data_train"))
 from data_frame import get_joint_position, get_frame_count
 
 import config
@@ -64,7 +64,7 @@ def load_multiple_frames(frame_indices: List[int], bvh_file: str = 'data/walk.bv
     return [load_keypoints_from_bvh(idx, bvh_file) for idx in frame_indices]
 
 
-def load_all_bvh_files(data_dir: str = "data/") -> List[str]:
+def load_all_bvh_files(data_dir: str = "data_train/") -> List[str]:
     """
     扫描目录下所有.bvh文件。
     
