@@ -8,11 +8,11 @@ model.tree
 
 
 
-data_train/
 data_test/
+data_train/
 
 
+*.pyc
 __pycache__/
-
 
 

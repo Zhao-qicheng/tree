@@ -56,7 +56,7 @@ ROOT_BBOX_SIZE: float = 80.0  # 边长
 ROOT_BBOX_HALF_SIZE: float = ROOT_BBOX_SIZE / 2.0
 
 # 每个关键点在根节点的初始包围盒范围（min, max）
-# 采用相对于 Hips 原点的标准对称立方体 [-100, 100]^3（单位：厘米）。
+# 采用相对于 Hips 原点的标准对称立方体 [-80, 80]^3。
 ROOT_BOUNDING_BOXES: Dict[str, Tuple[Tuple[float, float, float], Tuple[float, float, float]]] = {
     name: (
         (-ROOT_BBOX_HALF_SIZE, -ROOT_BBOX_HALF_SIZE, -ROOT_BBOX_HALF_SIZE),
@@ -79,7 +79,7 @@ JSON_INDENT: int = 2
 # 查询配置
 TOP_K: int = 5  # 返回最相似的K个帧
 EXACT_MATCH_EPSILON: float = 0.001  # 精确匹配的距离阈值
-MIN_CANDIDATES: int = 100  # 八叉树查询时的最小候选帧数量（约为总数的1%）
+MIN_CANDIDATES: int = 5  # 八叉树查询时的最小候选帧数量（约为总数的1%）
 
 # 相似度计算权重（可根据关节重要性调整）
 JOINT_WEIGHTS: Dict[str, float] = {
