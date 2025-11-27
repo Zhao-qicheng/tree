@@ -49,7 +49,7 @@ OCTREE_KEYPOINT_NAMES = (
 )
 
 # 八叉树相关配置
-MAX_DEPTH: int = 15
+MAX_DEPTH: int = 11
 
 # 根节点包围盒尺寸参数（单位：文件中的单位，）
 ROOT_BBOX_SIZE: float = 80.0  # 边长
@@ -78,8 +78,8 @@ JSON_INDENT: int = 2
 
 # 查询配置
 TOP_K: int = 5  # 返回最相似的K个帧
-EXACT_MATCH_EPSILON: float = 0.001  # 精确匹配的距离阈值
-MIN_CANDIDATES: int = 5  # 八叉树查询时的最小候选帧数量（约为总数的1%）
+EXACT_MATCH_EPSILON: float = 0.01  # 精确匹配的距离阈值
+MIN_CANDIDATES: int = 30  # 八叉树查询时的最小候选帧数量（约为总数的1%）
 
 # 相似度计算权重（可根据关节重要性调整）
 JOINT_WEIGHTS: Dict[str, float] = {
