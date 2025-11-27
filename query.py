@@ -7,16 +7,19 @@ from __future__ import annotations
 import sys
 import time
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Tuple
 
 import numpy as np
 
 from data_loader import load_keypoints_from_bvh
 from octree_builder import load_tree, load_metadata
-from similarity import find_similar_frames, find_similar_frames_in_candidates, SimilarityResult
-from data_structures import coerce_body_keypoints, compute_octant
+from similarity import find_similar_frames_in_candidates, SimilarityResult
+from data_structures import coerce_body_keypoints, compute_octant, FrameMetadata
 from octree_node import ActionTreeNode
 import config
+
+
+_MODEL_CACHE: dict[Tuple[str, str], Tuple[ActionTreeNode, List[FrameMetadata]]] = {}
 
 
 def find_candidate_frames_from_tree(tree: ActionTreeNode,
@@ -80,11 +83,43 @@ def find_candidate_frames_from_tree(tree: ActionTreeNode,
     return candidate_frame_ids
 
 
+def _load_model_once(model_tree_path: str,
+                     model_metadata_path: str,
+                     use_cache: bool = True) -> tuple[ActionTreeNode, List[FrameMetadata], bool]:
+    """
+    加载模型，如果启用缓存则返回内存中已有的模型。
+
+    返回:
+        (tree, metadata_list, from_cache)
+    """
+    cache_key = (
+        str(Path(model_tree_path).resolve()),
+        str(Path(model_metadata_path).resolve()),
+    )
+    if use_cache and cache_key in _MODEL_CACHE:
+        tree, metadata_list = _MODEL_CACHE[cache_key]
+        return tree, metadata_list, True
+
+    tree = load_tree(model_tree_path)
+    metadata_list = load_metadata(model_metadata_path)
+
+    if use_cache:
+        _MODEL_CACHE[cache_key] = (tree, metadata_list)
+
+    return tree, metadata_list, False
+
+
 def query_frame(query_keypoints: dict[str, np.ndarray],
                model_tree_path: str = "model.tree",
                model_metadata_path: str = "model.pkl",
                top_k: int = None,
-               verbose: bool = True) -> List[SimilarityResult]:
+               verbose: bool = True,
+               *,
+               tree_instance: Optional[ActionTreeNode] = None,
+               metadata_instance: Optional[List[FrameMetadata]] = None,
+               use_cache: bool = True,
+               enable_parallel: bool = True,
+               parallel_workers: Optional[int] = None) -> List[SimilarityResult]:
     """
     执行帧检索查询。
     
@@ -108,19 +143,32 @@ def query_frame(query_keypoints: dict[str, np.ndarray],
         print("=" * 80)
         print("\n步骤1: 加载模型...")
     
-    # 开始计时 - 加载模型
-    load_start_time = time.time()
-    
-    tree = load_tree(model_tree_path)
-    metadata_list = load_metadata(model_metadata_path)
-    
-    load_elapsed = time.time() - load_start_time
+    load_elapsed = 0.0
+    if tree_instance is not None and metadata_instance is not None:
+        tree = tree_instance
+        metadata_list = metadata_instance
+        from_cache = True
+        if verbose:
+            print("  使用传入的模型实例，无需重新加载。")
+    else:
+        load_start_time = time.time()
+        tree, metadata_list, from_cache = _load_model_once(
+            model_tree_path,
+            model_metadata_path,
+            use_cache=use_cache,
+        )
+        if from_cache:
+            if verbose:
+                print("  使用内存缓存的模型，无需再次读取磁盘。")
+        else:
+            load_elapsed = time.time() - load_start_time
+            if verbose:
+                print(f"  成功加载八叉树模型: {model_tree_path}")
+                print(f"  成功加载元数据: {model_metadata_path}")
+                print(f"  加载模型用时: {load_elapsed:.4f} 秒")
     
     if verbose:
-        print(f"  成功加载八叉树模型: {model_tree_path}")
-        print(f"  成功加载元数据: {model_metadata_path}")
         print(f"  训练集帧数: {len(metadata_list)}")
-        print(f"  加载模型用时: {load_elapsed:.4f} 秒")
     
     # 2. 打印查询帧的关键点信息
     if verbose:
@@ -157,7 +205,14 @@ def query_frame(query_keypoints: dict[str, np.ndarray],
     # 开始计时 - 精确计算
     similarity_start_time = time.time()
     
-    results = find_similar_frames_in_candidates(query_keypoints, metadata_list, candidate_frame_ids, top_k)
+    results = find_similar_frames_in_candidates(
+        query_keypoints,
+        metadata_list,
+        candidate_frame_ids,
+        top_k,
+        enable_parallel=enable_parallel,
+        max_workers=parallel_workers,
+    )
     
     similarity_elapsed = time.time() - similarity_start_time
     
@@ -289,7 +344,13 @@ def query_from_bvh(bvh_file: str,
                   model_tree_path: str = "model.tree",
                   model_metadata_path: str = "model.pkl",
                   top_k: int = None,
-                  verbose: bool = True) -> List[SimilarityResult]:
+                  verbose: bool = True,
+                  *,
+                  tree_instance: Optional[ActionTreeNode] = None,
+                  metadata_instance: Optional[List[FrameMetadata]] = None,
+                  use_cache: bool = True,
+                  enable_parallel: bool = True,
+                  parallel_workers: Optional[int] = None) -> List[SimilarityResult]:
     """
     从BVH文件加载指定帧并执行查询。
     
@@ -313,7 +374,85 @@ def query_from_bvh(bvh_file: str,
     keypoints = load_keypoints_from_bvh(frame_index, bvh_file)
     
     # 执行查询
-    return query_frame(keypoints, model_tree_path, model_metadata_path, top_k, verbose)
+    return query_frame(
+        keypoints,
+        model_tree_path,
+        model_metadata_path,
+        top_k,
+        verbose,
+        tree_instance=tree_instance,
+        metadata_instance=metadata_instance,
+        use_cache=use_cache,
+        enable_parallel=enable_parallel,
+        parallel_workers=parallel_workers,
+    )
+
+
+def interactive_mode(model_tree_path: str,
+                     model_metadata_path: str,
+                     top_k: Optional[int] = None,
+                     verbose: bool = True) -> None:
+    """交互式查询模式：加载一次模型，多次执行查询。"""
+    print("=" * 80)
+    print("交互式查询模式")
+    print("=" * 80)
+    print("提示: 输入 \"<BVH路径> <帧索引>\", 或输入 q 退出。")
+
+    load_start = time.time()
+    tree, metadata_list, from_cache = _load_model_once(
+        model_tree_path,
+        model_metadata_path,
+        use_cache=True,
+    )
+    load_elapsed = 0.0 if from_cache else time.time() - load_start
+    print(f"\n模型已加载，帧数: {len(metadata_list)}，耗时: {load_elapsed:.2f} 秒")
+
+    while True:
+        try:
+            user_input = input("\n查询> ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print("\n退出交互模式。")
+            break
+
+        if not user_input:
+            continue
+
+        if user_input.lower() in {"q", "quit", "exit"}:
+            print("已退出交互模式。")
+            break
+
+        parts = user_input.split()
+        if len(parts) < 2:
+            print("输入格式错误，请使用: <BVH路径> <帧索引>")
+            continue
+
+        frame_index_str = parts[-1]
+        bvh_file = " ".join(parts[:-1])
+
+        try:
+            frame_index = int(frame_index_str)
+        except ValueError:
+            print("帧索引必须为整数。")
+            continue
+
+        if not Path(bvh_file).exists():
+            print(f"BVH文件不存在: {bvh_file}")
+            continue
+
+        try:
+            keypoints = load_keypoints_from_bvh(frame_index, bvh_file)
+            query_frame(
+                keypoints,
+                model_tree_path=model_tree_path,
+                model_metadata_path=model_metadata_path,
+                top_k=top_k,
+                verbose=verbose,
+                tree_instance=tree,
+                metadata_instance=metadata_list,
+                use_cache=True,
+            )
+        except Exception as exc:
+            print(f"查询失败: {exc}")
 
 
 def main():
@@ -321,21 +460,17 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description="帧检索查询")
-    parser.add_argument("--bvh-file", required=True, help="BVH文件路径")
-    parser.add_argument("--frame-index", type=int, required=True, help="帧索引")
+    parser.add_argument("--bvh-file", help="BVH文件路径（交互模式可省略）")
+    parser.add_argument("--frame-index", type=int, help="帧索引（交互模式可省略）")
     parser.add_argument("--model-tree", default="model.tree", help="树模型文件路径")
     parser.add_argument("--model-metadata", default="model.pkl", help="元数据文件路径")
     parser.add_argument("--top-k", type=int, default=None, help=f"返回前K个结果（默认{config.TOP_K}）")
     parser.add_argument("--quiet", action="store_true", help="静默模式")
+    parser.add_argument("--interactive", action="store_true", help="交互式模式：加载一次模型，多次查询")
     
     args = parser.parse_args()
     
     try:
-        # 检查文件是否存在
-        if not Path(args.bvh_file).exists():
-            print(f"错误: BVH文件不存在: {args.bvh_file}")
-            sys.exit(1)
-        
         if not Path(args.model_tree).exists():
             print(f"错误: 树模型文件不存在: {args.model_tree}")
             print("请先运行 train.py 训练模型")
@@ -344,6 +479,23 @@ def main():
         if not Path(args.model_metadata).exists():
             print(f"错误: 元数据文件不存在: {args.model_metadata}")
             print("请先运行 train.py 训练模型")
+            sys.exit(1)
+
+        if args.interactive:
+            interactive_mode(
+                model_tree_path=args.model_tree,
+                model_metadata_path=args.model_metadata,
+                top_k=args.top_k,
+                verbose=not args.quiet,
+            )
+            sys.exit(0)
+
+        if not args.bvh_file or args.frame_index is None:
+            print("错误: 非交互模式下必须提供 --bvh-file 与 --frame-index。")
+            sys.exit(1)
+
+        if not Path(args.bvh_file).exists():
+            print(f"错误: BVH文件不存在: {args.bvh_file}")
             sys.exit(1)
         
         # 执行查询
