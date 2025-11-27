@@ -12,7 +12,7 @@ data_test/
 data_train/
 
 
-
+*.pyc
 __pycache__/
 *.md
 
