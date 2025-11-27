@@ -409,7 +409,12 @@ def interactive_mode(model_tree_path: str,
 
     while True:
         try:
-            user_input = input("\n查询> ").strip()
+            print("\n查询> ", end="", flush=True)
+            user_input = sys.stdin.readline()
+            if not user_input:
+                print("\n检测到输入流结束，退出交互模式。")
+                break
+            user_input = user_input.strip()
         except (KeyboardInterrupt, EOFError):
             print("\n退出交互模式。")
             break
