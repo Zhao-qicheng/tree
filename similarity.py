@@ -4,8 +4,10 @@
 
 from __future__ import annotations
 
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
+import os
 
 import numpy as np
 
@@ -104,7 +106,9 @@ def is_exact_match(distance: float, epsilon: float = None) -> bool:
 
 def find_similar_frames(query_keypoints: KeypointInput,
                        metadata_list: List[FrameMetadata],
-                       top_k: int = None) -> List[SimilarityResult]:
+                       top_k: int = None,
+                       enable_parallel: bool = True,
+                       max_workers: Optional[int] = None) -> List[SimilarityResult]:
     """
     在元数据列表中查找与查询帧最相似的K个帧。
     
@@ -123,26 +127,29 @@ def find_similar_frames(query_keypoints: KeypointInput,
     body = coerce_body_keypoints(query_keypoints)
     query_keypoint_dict = body.as_dict()
     
-    # 计算所有帧的距离
-    results: List[SimilarityResult] = []
-    
-    for metadata in metadata_list:
-        # 计算加权距离
+    candidate_count = len(metadata_list)
+    if candidate_count == 0:
+        return []
+
+    def compute_for_metadata(metadata: FrameMetadata) -> SimilarityResult:
         distance = compute_weighted_distance(query_keypoint_dict, metadata.keypoints)
-        
-        # 计算相似度得分
         similarity_score = compute_similarity_score(distance)
-        
-        # 判断是否为精确匹配
         exact_match = is_exact_match(distance)
-        
-        result = SimilarityResult(
+        return SimilarityResult(
             frame_metadata=metadata,
             distance=distance,
             similarity_score=similarity_score,
-            is_exact_match=exact_match
+            is_exact_match=exact_match,
         )
-        results.append(result)
+
+    use_parallel = enable_parallel and candidate_count >= 32
+    if use_parallel:
+        workers = max_workers or (os.cpu_count() or 1)
+        workers = min(workers, candidate_count)
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            results = list(executor.map(compute_for_metadata, metadata_list))
+    else:
+        results = [compute_for_metadata(metadata) for metadata in metadata_list]
     
     # 按距离排序（从小到大）
     results.sort(key=lambda x: x.distance)
@@ -154,7 +161,9 @@ def find_similar_frames(query_keypoints: KeypointInput,
 def find_similar_frames_in_candidates(query_keypoints: KeypointInput,
                                      metadata_list: List[FrameMetadata],
                                      candidate_frame_ids: List[str],
-                                     top_k: int = None) -> List[SimilarityResult]:
+                                     top_k: int = None,
+                                     enable_parallel: bool = True,
+                                     max_workers: Optional[int] = None) -> List[SimilarityResult]:
     """
     在候选帧ID列表中查找与查询帧最相似的K个帧。
     
@@ -180,7 +189,13 @@ def find_similar_frames_in_candidates(query_keypoints: KeypointInput,
     ]
     
     # 在候选帧中查找最相似的
-    return find_similar_frames(query_keypoints, candidate_metadata, top_k)
+    return find_similar_frames(
+        query_keypoints,
+        candidate_metadata,
+        top_k,
+        enable_parallel=enable_parallel,
+        max_workers=max_workers,
+    )
 
 
 def compute_frame_distance_matrix(metadata_list: List[FrameMetadata]) -> np.ndarray:

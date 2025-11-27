@@ -6,8 +6,10 @@ from __future__ import annotations
 
 import sys
 import time
+import os
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import numpy as np
 
@@ -35,10 +37,38 @@ def generate_frame_id(bvh_file: str, frame_index: int) -> str:
     return frame_id
 
 
+def _load_frame_worker(payload: tuple[int, str]) -> dict:
+    """子进程：加载单帧关键点并返回结果。"""
+    frame_index, bvh_file = payload
+    try:
+        keypoints = load_keypoints_from_bvh(frame_index, bvh_file)
+        frame_id = generate_frame_id(bvh_file, frame_index)
+        rounded_keypoints = {
+            name: np.round(pos, config.JSON_FLOAT_PRECISION)
+            for name, pos in keypoints.items()
+        }
+        return {
+            "success": True,
+            "frame_index": frame_index,
+            "bvh_file": bvh_file,
+            "frame_id": frame_id,
+            "keypoints": keypoints,
+            "rounded_keypoints": rounded_keypoints,
+        }
+    except Exception as exc:
+        return {
+            "success": False,
+            "frame_index": frame_index,
+            "bvh_file": bvh_file,
+            "error": str(exc),
+        }
+
+
 def train_model(data_dir: str = "data_train/", 
                 model_tree_path: str = "model.tree",
                 model_metadata_path: str = "model.pkl",
-                verbose: bool = True) -> None:
+                verbose: bool = True,
+                num_workers: Optional[int] = None) -> None:
     """
     训练帧检索模型。
     
@@ -47,11 +77,19 @@ def train_model(data_dir: str = "data_train/",
         model_tree_path: 八叉树模型保存路径
         model_metadata_path: 元数据保存路径
         verbose: 是否打印详细信息
+        num_workers: 并行加载BVH的进程数（None表示自动选择）
     """
+    if num_workers is None:
+        cpu_total = os.cpu_count() or 1
+        num_workers = max(1, cpu_total - 1)
+    elif num_workers <= 0:
+        num_workers = 1
+
     if verbose:
         print("=" * 80)
         print("开始训练帧检索模型")
         print("=" * 80)
+        print(f"并行加载进程数: {num_workers}")
     
     # 1. 扫描所有BVH文件
     if verbose:
@@ -84,66 +122,71 @@ def train_model(data_dir: str = "data_train/",
     # 记录总开始时间
     total_start_time = time.time()
     
-    for bvh_file in bvh_files:
-        try:
-            frame_count = get_bvh_frame_count(bvh_file)
-            if verbose:
-                print(f"\n处理文件: {Path(bvh_file).name} ({frame_count} 帧)")
-            
-            # 记录当前文件开始时间
-            file_start_time = time.time()
-            file_frame_count = 0
-            
-            for frame_index in range(frame_count):
-                try:
-                    # 加载关键点
-                    keypoints = load_keypoints_from_bvh(frame_index, bvh_file)
-                    
-                    # 生成帧ID
-                    frame_id = generate_frame_id(bvh_file, frame_index)
-                    
-                    # 插入到八叉树
-                    leaf_node, combination_indices = insert_frame(root, keypoints, frame_id)
-                    
-                    # 创建元数据
-                    # 将坐标精度设置为6位小数
-                    rounded_keypoints = {
-                        name: np.round(pos, config.JSON_FLOAT_PRECISION)
-                        for name, pos in keypoints.items()
-                    }
-                    
-                    metadata = FrameMetadata(
-                        bvh_file=bvh_file,
-                        frame_index=frame_index,
-                        frame_id=frame_id,
-                        keypoints=rounded_keypoints
-                    )
-                    metadata_list.append(metadata)
-                    
-                    total_frames += 1
-                    file_frame_count += 1
-                    
-                    # 每处理100帧打印一次进度
-                    if verbose and total_frames % 100 == 0:
-                        print(f"  已处理 {total_frames} 帧...", end='\r')
+    executor: ProcessPoolExecutor | None = None
+    if num_workers > 1:
+        executor = ProcessPoolExecutor(max_workers=num_workers)
+
+    try:
+        for bvh_file in bvh_files:
+            try:
+                frame_count = get_bvh_frame_count(bvh_file)
+                if verbose:
+                    print(f"\n处理文件: {Path(bvh_file).name} ({frame_count} 帧)")
                 
-                except Exception as e:
-                    error_count += 1
-                    if verbose:
-                        print(f"  警告: 无法加载帧 {frame_index}: {e}")
-            
-            # 文件处理完成，输出该文件用时和总时长
-            file_elapsed = time.time() - file_start_time
-            total_elapsed = time.time() - total_start_time
-            
-            if verbose:
-                print(f"  ✓ 完成 {Path(bvh_file).name}: {file_frame_count} 帧")
-                print(f"  文件用时: {file_elapsed:.2f} 秒 (平均: {file_elapsed/file_frame_count:.4f} 秒/帧)")
-                print(f"  总时长: {total_elapsed:.2f} 秒")
+                # 记录当前文件开始时间
+                file_start_time = time.time()
+                file_frame_count = 0
+                
+                if executor:
+                    futures = [
+                        executor.submit(_load_frame_worker, (frame_index, bvh_file))
+                        for frame_index in range(frame_count)
+                    ]
+                    results_iter = (future.result() for future in as_completed(futures))
+                else:
+                    results_iter = (_load_frame_worker((frame_index, bvh_file)) for frame_index in range(frame_count))
+
+                for result in results_iter:
+                    if result["success"]:
+                        keypoints = result["keypoints"]
+                        frame_id = result["frame_id"]
+
+                        insert_frame(root, keypoints, frame_id)
+
+                        metadata = FrameMetadata(
+                            bvh_file=result["bvh_file"],
+                            frame_index=result["frame_index"],
+                            frame_id=frame_id,
+                            keypoints=result["rounded_keypoints"],
+                        )
+                        metadata_list.append(metadata)
+
+                        total_frames += 1
+                        file_frame_count += 1
+
+                        if verbose and total_frames % 100 == 0:
+                            print(f"  已处理 {total_frames} 帧...", end='\r')
+                    else:
+                        error_count += 1
+                        if verbose:
+                            print(f"  警告: 无法加载帧 {result['frame_index']}: {result['error']}")
+                
+                # 文件处理完成，输出该文件用时和总时长
+                file_elapsed = time.time() - file_start_time
+                total_elapsed = time.time() - total_start_time
+                
+                if verbose:
+                    avg = file_elapsed / file_frame_count if file_frame_count else 0
+                    print(f"  ✓ 完成 {Path(bvh_file).name}: {file_frame_count} 帧")
+                    print(f"  文件用时: {file_elapsed:.2f} 秒 (平均: {avg:.4f} 秒/帧)")
+                    print(f"  总时长: {total_elapsed:.2f} 秒")
         
-        except Exception as e:
-            if verbose:
-                print(f"  错误: 无法处理文件 {Path(bvh_file).name}: {e}")
+            except Exception as e:
+                if verbose:
+                    print(f"  错误: 无法处理文件 {Path(bvh_file).name}: {e}")
+    finally:
+        if executor:
+            executor.shutdown(wait=True)
     
     if verbose:
         print(f"\n\n训练完成!")
@@ -222,6 +265,7 @@ def main():
     parser.add_argument("--output-tree", default="model.tree", help="输出树文件路径")
     parser.add_argument("--output-metadata", default="model.pkl", help="输出元数据文件路径")
     parser.add_argument("--quiet", action="store_true", help="静默模式，不打印详细信息")
+    parser.add_argument("--workers", type=int, default=None, help="并行加载进程数（默认CPU核心数-1）")
     
     args = parser.parse_args()
     
@@ -230,7 +274,8 @@ def main():
             data_dir=args.data_dir,
             model_tree_path=args.output_tree,
             model_metadata_path=args.output_metadata,
-            verbose=not args.quiet
+            verbose=not args.quiet,
+            num_workers=args.workers,
         )
     except Exception as e:
         print(f"\n错误: {e}")

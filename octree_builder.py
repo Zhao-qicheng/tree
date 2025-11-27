@@ -8,6 +8,7 @@ import json
 import pickle
 from typing import Mapping, List
 from pathlib import Path
+import sys
 
 import config
 from data_structures import (
@@ -71,16 +72,41 @@ def insert_frame(root: ActionTreeNode, keypoints: KeypointInput, frame_id: str) 
     return current, combination_indices
 
 
+def _detach_parent_links(root: ActionTreeNode) -> list[tuple[ActionTreeNode, ActionTreeNode]]:
+    """移除所有parent引用，并返回用于恢复的列表。"""
+    stack = [root]
+    detached: list[tuple[ActionTreeNode, ActionTreeNode]] = []
+
+    while stack:
+        node = stack.pop()
+        for _, child in node.iter_children():
+            stack.append(child)
+            if child.parent is not None:
+                detached.append((child, child.parent))
+                child.parent = None
+    return detached
+
+
+def _restore_parent_links(detached: list[tuple[ActionTreeNode, ActionTreeNode]]) -> None:
+    """根据记录恢复parent引用。"""
+    for child, parent in detached:
+        child.parent = parent
+
+
 def save_tree(root: ActionTreeNode, path: str) -> None:
     """
     使用pickle保存八叉树到二进制文件。
-    
-    参数:
-        root: 八叉树根节点
-        path: 保存路径（.tree文件）
+
+    保存前会临时清除所有parent引用以减少序列化体积和耗时，
+    保存完成后再恢复引用。
     """
-    with open(path, "wb") as file:
-        pickle.dump(root, file, protocol=pickle.HIGHEST_PROTOCOL)
+    sys.setrecursionlimit(20000)
+    detached = _detach_parent_links(root)
+    try:
+        with open(path, "wb") as file:
+            pickle.dump(root, file, protocol=pickle.HIGHEST_PROTOCOL)
+    finally:
+        _restore_parent_links(detached)
 
 
 def load_tree(path: str) -> ActionTreeNode:
@@ -93,8 +119,19 @@ def load_tree(path: str) -> ActionTreeNode:
     返回:
         八叉树根节点
     """
+    sys.setrecursionlimit(20000)
     with open(path, "rb") as file:
-        return pickle.load(file)
+        root: ActionTreeNode = pickle.load(file)
+
+    # 重新建立parent引用，支持查询阶段的回溯逻辑
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        for _, child in node.iter_children():
+            child.parent = node
+            stack.append(child)
+
+    return root
 
 
 def save_metadata(metadata_list: List[FrameMetadata], path: str) -> None:
