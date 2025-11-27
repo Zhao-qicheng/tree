@@ -28,7 +28,7 @@ def test_training():
     start_time = time.time()
     
     train_model(
-        data_dir="data/",
+        data_dir="data_train/",
         model_tree_path="model.tree",
         model_metadata_path="model.pkl",
         verbose=True
@@ -51,7 +51,7 @@ def test_exact_match_query():
     print("=" * 80)
     
     # 选择一个训练集中的帧进行查询
-    bvh_files = load_all_bvh_files("data/")
+    bvh_files = load_all_bvh_files("data_train/")
     test_file = bvh_files[0]  # 使用第一个文件
     test_frame_index = 10  # 使用第10帧
     
@@ -101,7 +101,7 @@ def test_fuzzy_query():
     print("=" * 80)
     
     # 选择一个训练集中的帧，然后添加噪声
-    bvh_files = load_all_bvh_files("data/")
+    bvh_files = load_all_bvh_files("data_train/")
     test_file = bvh_files[0]
     test_frame_index = 20
     
@@ -162,7 +162,7 @@ def test_cross_file_query():
     print("测试4: 跨文件查询")
     print("=" * 80)
     
-    bvh_files = load_all_bvh_files("data/")
+    bvh_files = load_all_bvh_files("data_train/")
     
     if len(bvh_files) < 2:
         print("\n跳过: 数据目录中少于2个BVH文件")
