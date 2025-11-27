@@ -8,8 +8,8 @@ model.tree
 
 
 
-data/
-
+data_train/
+data_test/
 
 
 __pycache__/
