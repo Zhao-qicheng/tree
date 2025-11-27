@@ -35,7 +35,7 @@ def generate_frame_id(bvh_file: str, frame_index: int) -> str:
     return frame_id
 
 
-def train_model(data_dir: str = "data/", 
+def train_model(data_dir: str = "data_train/", 
                 model_tree_path: str = "model.tree",
                 model_metadata_path: str = "model.pkl",
                 verbose: bool = True) -> None:
@@ -218,7 +218,7 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description="训练帧检索模型")
-    parser.add_argument("--data-dir", default="data/", help="数据目录路径")
+    parser.add_argument("--data-dir", default="data_train/", help="数据目录路径")
     parser.add_argument("--output-tree", default="model.tree", help="输出树文件路径")
     parser.add_argument("--output-metadata", default="model.pkl", help="输出元数据文件路径")
     parser.add_argument("--quiet", action="store_true", help="静默模式，不打印详细信息")
