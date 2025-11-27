@@ -208,7 +208,7 @@ def train_model(data_dir: str = "data_train/",
     if verbose:
         print("\n步骤5: 保存模型...")
     
-    save_tree(root, model_tree_path)
+    save_tree(root, model_tree_path, show_progress=verbose)
     if verbose:
         print(f"  八叉树已保存到: {model_tree_path}")
     

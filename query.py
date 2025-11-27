@@ -14,12 +14,34 @@ import numpy as np
 from data_loader import load_keypoints_from_bvh
 from octree_builder import load_tree, load_metadata
 from similarity import find_similar_frames_in_candidates, SimilarityResult
-from data_structures import coerce_body_keypoints, compute_octant, FrameMetadata
+from data_structures import coerce_body_keypoints, compute_octant, FrameMetadata, BoundingBox
 from octree_node import ActionTreeNode
 import config
 
 
 _MODEL_CACHE: dict[Tuple[str, str], Tuple[ActionTreeNode, List[FrameMetadata]]] = {}
+
+
+def _estimate_node_distance(node: ActionTreeNode,
+                            keypoint_dict: dict[str, np.ndarray]) -> float:
+    """
+    根据节点包围盒中心与查询关键点的距离估算“接近程度”。
+    距离越小，表示节点越可能包含相似帧。
+    """
+    total = 0.0
+    count = 0
+    for name in config.OCTREE_KEYPOINT_NAMES:
+        if name not in keypoint_dict:
+            continue
+        bbox: BoundingBox | None = node.bboxes.get(name)
+        if bbox is None:
+            continue
+        center = bbox.center()
+        total += float(np.linalg.norm(keypoint_dict[name] - center))
+        count += 1
+    if count == 0:
+        return float("inf")
+    return total / count
 
 
 def find_candidate_frames_from_tree(tree: ActionTreeNode,
@@ -46,46 +68,70 @@ def find_candidate_frames_from_tree(tree: ActionTreeNode,
     body = coerce_body_keypoints(query_keypoints)
     keypoint_dict = body.as_dict()
     
-    # 1. 在八叉树中向下遍历到叶节点
-    current = tree
+    # 1. 使用 Beam Search 在八叉树中向下遍历，避免单一路径失效
+    beam_width = max(1, getattr(config, "BEAM_WIDTH", 4))
+    beam_nodes: list[tuple[ActionTreeNode, float]] = [(tree, 0.0)]
+    leaf_nodes: list[ActionTreeNode] = []
     
-    for depth in range(config.MAX_DEPTH):
-        # 只为用于八叉树的关键点计算octant（不包括hip原点）
-        octants = tuple(
-            compute_octant(keypoint_dict[name], current.bboxes[name])
-            for name in config.OCTREE_KEYPOINT_NAMES
-        )
-        
-        # 尝试获取子节点
-        child = current.get_child(octants)
-        if child is None:
-            # 没有子节点，停在当前节点
+    for _ in range(config.MAX_DEPTH):
+        next_candidates: list[tuple[float, ActionTreeNode]] = []
+        for node, _score in beam_nodes:
+            if not node.children:
+                leaf_nodes.append(node)
+                continue
+            for _, child in node.iter_children():
+                score = _estimate_node_distance(child, keypoint_dict)
+                next_candidates.append((score, child))
+        if not next_candidates:
             break
-        current = child
+        next_candidates.sort(key=lambda item: item[0])
+        beam_nodes = [(child, score) for score, child in next_candidates[:beam_width]]
     
-    # 2. 获取当前节点的候选帧
-    candidate_frame_ids = list(current.get_frame_ids())
+    candidate_nodes: list[ActionTreeNode] = [node for node, _ in beam_nodes]
+    candidate_nodes.extend(leaf_nodes)
     
-    # 3. 智能回溯：如果候选数量不足，向上回溯父节点扩充候选集
-    visited_nodes = {id(current)}  # 避免重复添加
+    candidate_frame_ids: list[str] = []
+    seen_frame_ids: set[str] = set()
+    visited_nodes: set[int] = set()
     
-    while len(candidate_frame_ids) < min_candidates and current.parent is not None:
-        current = current.parent
-        node_id = id(current)
-        
-        if node_id not in visited_nodes:
-            # 添加父节点的帧ID（去重）
-            for frame_id in current.get_frame_ids():
-                if frame_id not in candidate_frame_ids:
+    for node in candidate_nodes:
+        if node is None:
+            continue
+        visited_nodes.add(id(node))
+        for frame_id in node.get_frame_ids():
+            if frame_id not in seen_frame_ids:
+                candidate_frame_ids.append(frame_id)
+                seen_frame_ids.add(frame_id)
+    
+    # 2. 控制回溯层级：仅在必要时回溯少量层级，避免候选集膨胀
+    current_layer = candidate_nodes
+    backtrack_depth = 0
+    max_backtrack_depth = getattr(config, "MAX_BACKTRACK_DEPTH", 2)
+    
+    while (len(candidate_frame_ids) < min_candidates and
+           current_layer and
+           backtrack_depth < max_backtrack_depth):
+        parents: list[ActionTreeNode] = []
+        for node in current_layer:
+            parent = getattr(node, "parent", None)
+            if parent is None or id(parent) in visited_nodes:
+                continue
+            visited_nodes.add(id(parent))
+            parents.append(parent)
+            for frame_id in parent.get_frame_ids():
+                if frame_id not in seen_frame_ids:
                     candidate_frame_ids.append(frame_id)
-            visited_nodes.add(node_id)
+                    seen_frame_ids.add(frame_id)
+        current_layer = parents
+        backtrack_depth += 1
     
     return candidate_frame_ids
 
 
 def _load_model_once(model_tree_path: str,
                      model_metadata_path: str,
-                     use_cache: bool = True) -> tuple[ActionTreeNode, List[FrameMetadata], bool]:
+                     use_cache: bool = True,
+                     show_progress: bool = True) -> tuple[ActionTreeNode, List[FrameMetadata], bool]:
     """
     加载模型，如果启用缓存则返回内存中已有的模型。
 
@@ -100,7 +146,7 @@ def _load_model_once(model_tree_path: str,
         tree, metadata_list = _MODEL_CACHE[cache_key]
         return tree, metadata_list, True
 
-    tree = load_tree(model_tree_path)
+    tree = load_tree(model_tree_path, show_progress=show_progress)
     metadata_list = load_metadata(model_metadata_path)
 
     if use_cache:
@@ -156,6 +202,7 @@ def query_frame(query_keypoints: dict[str, np.ndarray],
             model_tree_path,
             model_metadata_path,
             use_cache=use_cache,
+            show_progress=verbose,
         )
         if from_cache:
             if verbose:
@@ -403,6 +450,7 @@ def interactive_mode(model_tree_path: str,
         model_tree_path,
         model_metadata_path,
         use_cache=True,
+        show_progress=True,
     )
     load_elapsed = 0.0 if from_cache else time.time() - load_start
     print(f"\n模型已加载，帧数: {len(metadata_list)}，耗时: {load_elapsed:.2f} 秒")

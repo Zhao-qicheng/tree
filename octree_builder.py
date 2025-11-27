@@ -72,28 +72,43 @@ def insert_frame(root: ActionTreeNode, keypoints: KeypointInput, frame_id: str) 
     return current, combination_indices
 
 
-def _detach_parent_links(root: ActionTreeNode) -> list[tuple[ActionTreeNode, ActionTreeNode]]:
+def _detach_parent_links(root: ActionTreeNode,
+                         show_progress: bool = False) -> list[tuple[ActionTreeNode, ActionTreeNode]]:
     """移除所有parent引用，并返回用于恢复的列表。"""
     stack = [root]
     detached: list[tuple[ActionTreeNode, ActionTreeNode]] = []
+    processed = 0
+    progress_step = 10000
 
     while stack:
         node = stack.pop()
+        processed += 1
+        if show_progress and processed % progress_step == 0:
+            print(f"    [保存模型] 已遍历 {processed} 个节点...")
         for _, child in node.iter_children():
             stack.append(child)
             if child.parent is not None:
                 detached.append((child, child.parent))
                 child.parent = None
+    if show_progress:
+        print(f"    [保存模型] 节点遍历完成，共 {processed} 个节点。")
     return detached
 
 
-def _restore_parent_links(detached: list[tuple[ActionTreeNode, ActionTreeNode]]) -> None:
+def _restore_parent_links(detached: list[tuple[ActionTreeNode, ActionTreeNode]],
+                          show_progress: bool = False) -> None:
     """根据记录恢复parent引用。"""
-    for child, parent in detached:
+    total = len(detached)
+    progress_step = 10000
+    for idx, (child, parent) in enumerate(detached, start=1):
         child.parent = parent
+        if show_progress and idx % progress_step == 0:
+            print(f"    [保存模型] 已恢复 {idx}/{total} 条引用...")
+    if show_progress and total:
+        print(f"    [保存模型] 引用恢复完成，共 {total} 条。")
 
 
-def save_tree(root: ActionTreeNode, path: str) -> None:
+def save_tree(root: ActionTreeNode, path: str, show_progress: bool = True) -> None:
     """
     使用pickle保存八叉树到二进制文件。
 
@@ -101,15 +116,40 @@ def save_tree(root: ActionTreeNode, path: str) -> None:
     保存完成后再恢复引用。
     """
     sys.setrecursionlimit(20000)
-    detached = _detach_parent_links(root)
+    if show_progress:
+        print(f"[保存模型] 步骤1/3: 清除 parent 引用...")
+    detached = _detach_parent_links(root, show_progress=show_progress)
     try:
+        if show_progress:
+            print(f"[保存模型] 步骤2/3: 写入 {path} ...")
         with open(path, "wb") as file:
             pickle.dump(root, file, protocol=pickle.HIGHEST_PROTOCOL)
     finally:
-        _restore_parent_links(detached)
+        if show_progress:
+            print("[保存模型] 步骤3/3: 恢复 parent 引用...")
+        _restore_parent_links(detached, show_progress=show_progress)
+        if show_progress:
+            print(f"[保存模型] 完成，输出文件: {path}")
 
 
-def load_tree(path: str) -> ActionTreeNode:
+def _rebuild_parent_links(root: ActionTreeNode, show_progress: bool = False) -> None:
+    """重新建立parent引用，支持查询阶段的回溯逻辑。"""
+    stack = [root]
+    processed = 0
+    progress_step = 10000
+    while stack:
+        node = stack.pop()
+        processed += 1
+        for _, child in node.iter_children():
+            child.parent = node
+            stack.append(child)
+        if show_progress and processed % progress_step == 0:
+            print(f"    [加载模型] 已恢复 {processed} 个节点的父引用...")
+    if show_progress:
+        print(f"    [加载模型] 父引用恢复完成，共 {processed} 个节点。")
+
+
+def load_tree(path: str, show_progress: bool = True) -> ActionTreeNode:
     """
     从pickle文件加载八叉树。
     
@@ -120,17 +160,16 @@ def load_tree(path: str) -> ActionTreeNode:
         八叉树根节点
     """
     sys.setrecursionlimit(20000)
+    if show_progress:
+        print(f"[加载模型] 步骤1/2: 正在读取 {path} ...")
     with open(path, "rb") as file:
         root: ActionTreeNode = pickle.load(file)
 
-    # 重新建立parent引用，支持查询阶段的回溯逻辑
-    stack = [root]
-    while stack:
-        node = stack.pop()
-        for _, child in node.iter_children():
-            child.parent = node
-            stack.append(child)
-
+    if show_progress:
+        print("[加载模型] 步骤2/2: 恢复 parent 引用...")
+    _rebuild_parent_links(root, show_progress=show_progress)
+    if show_progress:
+        print("[加载模型] 完成。")
     return root
 
 
