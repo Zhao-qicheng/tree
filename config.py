@@ -103,3 +103,36 @@ JOINT_WEIGHTS: Dict[str, float] = {
     "rFoot": 1.2,
 }
 
+# ============================================================================
+# 多树旋转索引配置
+# ============================================================================
+
+# 是否启用多树模式（False则使用传统单树模式）
+ENABLE_MULTI_TREE: bool = False
+
+# 旋转配置列表：定义每棵树的旋转参数
+# 每个配置包含：axis（旋转轴：'x'/'y'/'z'）和 angle（角度：度）
+ROTATION_CONFIGS: list[dict] = [
+    {"axis": "z", "angle": 0},    # 树0: 原始坐标系
+    {"axis": "z", "angle": 30},   # 树1: Z轴旋转30°
+    {"axis": "z", "angle": 60},   # 树2: Z轴旋转60°
+    {"axis": "y", "angle": 30},   # 树3: Y轴旋转30°（改变重力方向）
+    {"axis": "x", "angle": 30},   # 树4: X轴旋转30°
+]
+
+# 候选集合并策略
+# - "vote": 投票法（至少在N棵树中出现）- 推荐
+# - "union": 并集（所有树的候选合并）
+# - "intersection": 交集（在所有树中都出现）
+MERGE_STRATEGY: str = "vote"
+
+# 投票法的最小投票数阈值（仅当MERGE_STRATEGY="vote"时有效）
+# 推荐值：2-3（在至少2-3棵树中出现的帧才被认为是候选）
+MIN_VOTE_THRESHOLD: int = 2
+
+# 多树训练时是否使用并行（加速训练）
+PARALLEL_TRAIN_TREES: bool = True
+
+# 多树查询时是否使用并行（加速查询）
+PARALLEL_QUERY_TREES: bool = True
+

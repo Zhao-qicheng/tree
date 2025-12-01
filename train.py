@@ -16,6 +16,7 @@ import numpy as np
 from data_loader import load_all_bvh_files, get_bvh_frame_count, load_keypoints_from_bvh
 from data_structures import FrameMetadata
 from octree_builder import create_root_node, insert_frame, save_tree, save_metadata
+from rotation_utils import create_custom_rotation_configs, RotationConfig
 import config
 
 
@@ -64,20 +65,22 @@ def _load_frame_worker(payload: tuple[int, str]) -> dict:
         }
 
 
-def train_model(data_dir: str = "data_train/", 
-                model_tree_path: str = "model.tree",
-                model_metadata_path: str = "model.pkl",
-                verbose: bool = True,
-                num_workers: Optional[int] = None) -> None:
+def train_single_tree(data_dir: str,
+                      model_tree_path: str,
+                      model_metadata_path: str,
+                      rotation_config: Optional[RotationConfig] = None,
+                      verbose: bool = True,
+                      num_workers: Optional[int] = None) -> None:
     """
-    训练帧检索模型。
+    训练单棵八叉树。
     
     参数:
         data_dir: 数据目录路径
         model_tree_path: 八叉树模型保存路径
         model_metadata_path: 元数据保存路径
+        rotation_config: 旋转配置（None表示不旋转）
         verbose: 是否打印详细信息
-        num_workers: 并行加载BVH的进程数（None表示自动选择）
+        num_workers: 并行加载BVH的进程数
     """
     if num_workers is None:
         cpu_total = os.cpu_count() or 1
@@ -87,7 +90,10 @@ def train_model(data_dir: str = "data_train/",
 
     if verbose:
         print("=" * 80)
-        print("开始训练帧检索模型")
+        if rotation_config:
+            print(f"训练树 {rotation_config.tree_id}: {rotation_config.axis}轴 {rotation_config.angle}°")
+        else:
+            print("开始训练帧检索模型（单树模式）")
         print("=" * 80)
         print(f"并行加载进程数: {num_workers}")
     
@@ -150,6 +156,10 @@ def train_model(data_dir: str = "data_train/",
                     if result["success"]:
                         keypoints = result["keypoints"]
                         frame_id = result["frame_id"]
+                        
+                        # 应用旋转（如果有配置）
+                        if rotation_config:
+                            keypoints = rotation_config.rotate(keypoints)
 
                         insert_frame(root, keypoints, frame_id)
 
@@ -157,7 +167,10 @@ def train_model(data_dir: str = "data_train/",
                             bvh_file=result["bvh_file"],
                             frame_index=result["frame_index"],
                             frame_id=frame_id,
-                            keypoints=result["rounded_keypoints"],
+                            keypoints={
+                                name: np.round(pos, config.JSON_FLOAT_PRECISION)
+                                for name, pos in keypoints.items()
+                            },
                         )
                         metadata_list.append(metadata)
 
@@ -209,23 +222,106 @@ def train_model(data_dir: str = "data_train/",
         print("\n步骤5: 保存模型...")
     
     save_tree(root, model_tree_path, show_progress=verbose)
-    if verbose:
-        print(f"  八叉树已保存到: {model_tree_path}")
-    
     save_metadata(metadata_list, model_metadata_path)
+    
     if verbose:
-        print(f"  元数据已保存到: {model_metadata_path}")
-        
         # 显示文件大小
         tree_size = Path(model_tree_path).stat().st_size / 1024 / 1024
         metadata_size = Path(model_metadata_path).stat().st_size / 1024 / 1024
-        print(f"  树文件大小: {tree_size:.2f} MB")
-        print(f"  元数据文件大小: {metadata_size:.2f} MB")
+        print(f"\n  ✓ 模型保存完成")
+        print(f"  八叉树: {model_tree_path} ({tree_size:.2f} MB)")
+        print(f"  元数据: {model_metadata_path} ({metadata_size:.2f} MB)")
     
     if verbose:
         print("\n" + "=" * 80)
         print("训练完成！")
         print("=" * 80)
+
+
+def train_model(data_dir: str = "data_train/", 
+                model_tree_path: str = "model.tree",
+                model_metadata_path: str = "model.pkl",
+                verbose: bool = True,
+                num_workers: Optional[int] = None) -> None:
+    """
+    训练帧检索模型（支持单树和多树模式）。
+    
+    参数:
+        data_dir: 数据目录路径
+        model_tree_path: 八叉树模型保存路径（单树模式）或基础路径（多树模式）
+        model_metadata_path: 元数据保存路径（单树模式）或基础路径（多树模式）
+        verbose: 是否打印详细信息
+        num_workers: 并行加载BVH的进程数（None表示自动选择）
+    """
+    # 检查是否启用多树模式
+    if not config.ENABLE_MULTI_TREE:
+        # 单树模式
+        train_single_tree(
+            data_dir=data_dir,
+            model_tree_path=model_tree_path,
+            model_metadata_path=model_metadata_path,
+            rotation_config=None,
+            verbose=verbose,
+            num_workers=num_workers
+        )
+        return
+    
+    # 多树模式
+    if verbose:
+        print("=" * 80)
+        print(f"多树训练模式 - {len(config.ROTATION_CONFIGS)}棵树")
+        print("=" * 80)
+        print(f"旋转配置:")
+        for i, cfg in enumerate(config.ROTATION_CONFIGS):
+            print(f"  树{i}: {cfg['axis']}轴 {cfg['angle']}°")
+        print()
+    
+    # 创建旋转配置对象
+    rotation_configs = create_custom_rotation_configs(config.ROTATION_CONFIGS)
+    
+    # 为每棵树生成文件路径
+    base_tree_path = Path(model_tree_path).stem
+    base_metadata_path = Path(model_metadata_path).stem
+    output_dir = Path(model_tree_path).parent
+    
+    # 训练每棵树
+    total_start_time = time.time()
+    
+    for rot_config in rotation_configs:
+        tree_path = str(output_dir / rot_config.get_model_filename(base_tree_path))
+        metadata_path = str(output_dir / rot_config.get_metadata_filename(base_metadata_path))
+        
+        train_single_tree(
+            data_dir=data_dir,
+            model_tree_path=tree_path,
+            model_metadata_path=metadata_path,
+            rotation_config=rot_config,
+            verbose=verbose,
+            num_workers=num_workers
+        )
+        
+        if verbose:
+            print()  # 换行分隔不同的树
+    
+    total_elapsed = time.time() - total_start_time
+    
+    if verbose:
+        print("=" * 80)
+        print("所有树训练完成！")
+        print("=" * 80)
+        print(f"总用时: {total_elapsed:.2f} 秒")
+        print(f"平均每棵树: {total_elapsed/len(rotation_configs):.2f} 秒")
+        
+        # 统计总大小
+        total_size = 0.0
+        for rot_config in rotation_configs:
+            tree_path = str(output_dir / rot_config.get_model_filename(base_tree_path))
+            metadata_path = str(output_dir / rot_config.get_metadata_filename(base_metadata_path))
+            total_size += Path(tree_path).stat().st_size / 1024 / 1024
+            total_size += Path(metadata_path).stat().st_size / 1024 / 1024
+        
+        print(f"总模型大小: {total_size:.2f} MB")
+        print(f"平均每棵树: {total_size/len(rotation_configs):.2f} MB")
 
 
 def count_nodes(node) -> int:

@@ -10,6 +10,8 @@ from typing import Mapping, List
 from pathlib import Path
 import sys
 
+from tqdm import tqdm
+
 import config
 from data_structures import (
     BoundingBox,
@@ -77,35 +79,33 @@ def _detach_parent_links(root: ActionTreeNode,
     """移除所有parent引用，并返回用于恢复的列表。"""
     stack = [root]
     detached: list[tuple[ActionTreeNode, ActionTreeNode]] = []
-    processed = 0
-    progress_step = 10000
 
+    # 使用进度条显示
+    pbar = tqdm(desc="清除parent引用", unit="节点", disable=not show_progress)
+    
     while stack:
         node = stack.pop()
-        processed += 1
-        if show_progress and processed % progress_step == 0:
-            print(f"    [保存模型] 已遍历 {processed} 个节点...")
+        pbar.update(1)
         for _, child in node.iter_children():
             stack.append(child)
             if child.parent is not None:
                 detached.append((child, child.parent))
                 child.parent = None
-    if show_progress:
-        print(f"    [保存模型] 节点遍历完成，共 {processed} 个节点。")
+    
+    pbar.close()
     return detached
 
 
 def _restore_parent_links(detached: list[tuple[ActionTreeNode, ActionTreeNode]],
                           show_progress: bool = False) -> None:
     """根据记录恢复parent引用。"""
-    total = len(detached)
-    progress_step = 10000
-    for idx, (child, parent) in enumerate(detached, start=1):
+    # 使用进度条显示
+    pbar = tqdm(detached, desc="恢复parent引用", unit="引用", disable=not show_progress)
+    
+    for child, parent in pbar:
         child.parent = parent
-        if show_progress and idx % progress_step == 0:
-            print(f"    [保存模型] 已恢复 {idx}/{total} 条引用...")
-    if show_progress and total:
-        print(f"    [保存模型] 引用恢复完成，共 {total} 条。")
+    
+    pbar.close()
 
 
 def save_tree(root: ActionTreeNode, path: str, show_progress: bool = True) -> None:
@@ -116,37 +116,39 @@ def save_tree(root: ActionTreeNode, path: str, show_progress: bool = True) -> No
     保存完成后再恢复引用。
     """
     sys.setrecursionlimit(20000)
-    if show_progress:
-        print(f"[保存模型] 步骤1/3: 清除 parent 引用...")
+    
+    # 步骤1: 清除parent引用
     detached = _detach_parent_links(root, show_progress=show_progress)
+    
     try:
+        # 步骤2: 写入文件
         if show_progress:
-            print(f"[保存模型] 步骤2/3: 写入 {path} ...")
+            pbar = tqdm(total=1, desc="写入模型文件", unit="文件")
         with open(path, "wb") as file:
             pickle.dump(root, file, protocol=pickle.HIGHEST_PROTOCOL)
+        if show_progress:
+            pbar.update(1)
+            pbar.close()
     finally:
-        if show_progress:
-            print("[保存模型] 步骤3/3: 恢复 parent 引用...")
+        # 步骤3: 恢复parent引用
         _restore_parent_links(detached, show_progress=show_progress)
-        if show_progress:
-            print(f"[保存模型] 完成，输出文件: {path}")
 
 
 def _rebuild_parent_links(root: ActionTreeNode, show_progress: bool = False) -> None:
     """重新建立parent引用，支持查询阶段的回溯逻辑。"""
     stack = [root]
-    processed = 0
-    progress_step = 10000
+    
+    # 使用进度条显示
+    pbar = tqdm(desc="重建parent引用", unit="节点", disable=not show_progress)
+    
     while stack:
         node = stack.pop()
-        processed += 1
+        pbar.update(1)
         for _, child in node.iter_children():
             child.parent = node
             stack.append(child)
-        if show_progress and processed % progress_step == 0:
-            print(f"    [加载模型] 已恢复 {processed} 个节点的父引用...")
-    if show_progress:
-        print(f"    [加载模型] 父引用恢复完成，共 {processed} 个节点。")
+    
+    pbar.close()
 
 
 def load_tree(path: str, show_progress: bool = True) -> ActionTreeNode:
@@ -160,16 +162,17 @@ def load_tree(path: str, show_progress: bool = True) -> ActionTreeNode:
         八叉树根节点
     """
     sys.setrecursionlimit(20000)
+    
     if show_progress:
-        print(f"[加载模型] 步骤1/2: 正在读取 {path} ...")
+        pbar = tqdm(total=1, desc="读取模型文件", unit="文件")
     with open(path, "rb") as file:
         root: ActionTreeNode = pickle.load(file)
+    if show_progress:
+        pbar.update(1)
+        pbar.close()
 
-    if show_progress:
-        print("[加载模型] 步骤2/2: 恢复 parent 引用...")
     _rebuild_parent_links(root, show_progress=show_progress)
-    if show_progress:
-        print("[加载模型] 完成。")
+    
     return root
 
 
