@@ -3,8 +3,8 @@
 
 
 # 忽略生成的参数文件
-model.pkl
-model.tree
+*.pkl
+*.tree
 
 
 
@@ -15,6 +15,3 @@ data_train/
 *.pyc
 __pycache__/
 *.md
-
-
-
