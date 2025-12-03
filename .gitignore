@@ -16,6 +16,7 @@ data_test/
 
 
 __pycache__/
+*.md
 
 
 

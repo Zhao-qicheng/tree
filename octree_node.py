@@ -23,6 +23,7 @@ class ActionTreeNode:
         "children",
         "bboxes",
         "frame_ids",  # 存储帧ID列表而不是标签统计
+        "keypoint_names",
     )
 
     def __init__(
@@ -30,12 +31,16 @@ class ActionTreeNode:
         depth: int,
         bboxes: Dict[str, BoundingBox],
         parent: Optional["ActionTreeNode"] = None,
+        keypoint_names: Optional[Tuple[str, ...]] = None,
     ) -> None:
         self.depth = depth
         self.parent = parent
         self.children: Dict[MultiPointOctant, ActionTreeNode] = {}
         self.bboxes = bboxes
         self.frame_ids: list[str] = []  # 存储落在该节点的所有帧ID
+        if keypoint_names is None:
+            keypoint_names = tuple(config.OCTREE_KEYPOINT_NAMES)
+        self.keypoint_names: Tuple[str, ...] = keypoint_names
 
     # ======================== 子节点管理 ========================
 
@@ -56,13 +61,13 @@ class ActionTreeNode:
         if child is not None:
             return child
 
-        if len(octants) != len(config.OCTREE_KEYPOINT_NAMES):
+        if len(octants) != len(self.keypoint_names):
             raise ValueError(
-                f"octants 长度应为 {len(config.OCTREE_KEYPOINT_NAMES)}，当前为 {len(octants)}"
+                f"octants 长度应为 {len(self.keypoint_names)}，当前为 {len(octants)}"
             )
 
         child_bboxes: Dict[str, BoundingBox] = {}
-        for idx, name in enumerate(config.OCTREE_KEYPOINT_NAMES):
+        for idx, name in enumerate(self.keypoint_names):
             bbox = self.bboxes[name]
             child_bboxes[name] = bbox.subdivide(octants[idx])
 
@@ -70,6 +75,7 @@ class ActionTreeNode:
             depth=self.depth + 1,
             bboxes=child_bboxes,
             parent=self,
+            keypoint_names=self.keypoint_names,
         )
         self.children[octants] = child
         return child
@@ -98,6 +104,7 @@ class ActionTreeNode:
         return {
             "depth": self.depth,
             "frame_ids": self.frame_ids,
+            "keypoint_names": list(self.keypoint_names),
             "bboxes": {
                 name: bbox.to_tuple()
                 for name, bbox in self.bboxes.items()
@@ -122,6 +129,7 @@ class ActionTreeNode:
             depth=int(data["depth"]),
             bboxes=bboxes,
             parent=parent,
+            keypoint_names=tuple(data.get("keypoint_names", config.OCTREE_KEYPOINT_NAMES)),
         )
         node.frame_ids = list(data.get("frame_ids", []))
         for key_str, child_data in data.get("children", {}).items():
