@@ -33,25 +33,53 @@ class BodyKeypoints:
     关键点坐标集合（相对于 hip 原点）。
 
     所有坐标均为 3D numpy 向量，并确保 hip 恒为 [0, 0, 0]。
-    字段名使用BVH原始关节名称（16个关键关节）。
+    字段名使用BVH原始关节名称。
     """
-
+    # 使用 __dict__ 动态存储属性，或者显式列出所有属性
+    # 为了保持代码清晰和类型提示，我们显式列出所有43个关节
     hip: Vector3
+    abdomen: Vector3
     chest: Vector3
     neck: Vector3
     head: Vector3
-    lShldr: Vector3
-    lForeArm: Vector3
-    lHand: Vector3
+    leftEye: Vector3
+    rightEye: Vector3
+    rCollar: Vector3
     rShldr: Vector3
     rForeArm: Vector3
     rHand: Vector3
-    lThigh: Vector3
-    lShin: Vector3
-    lFoot: Vector3
+    rThumb1: Vector3
+    rThumb2: Vector3
+    rIndex1: Vector3
+    rIndex2: Vector3
+    rMid1: Vector3
+    rMid2: Vector3
+    rRing1: Vector3
+    rRing2: Vector3
+    rPinky1: Vector3
+    rPinky2: Vector3
+    lCollar: Vector3
+    lShldr: Vector3
+    lForeArm: Vector3
+    lHand: Vector3
+    lThumb1: Vector3
+    lThumb2: Vector3
+    lIndex1: Vector3
+    lIndex2: Vector3
+    lMid1: Vector3
+    lMid2: Vector3
+    lRing1: Vector3
+    lRing2: Vector3
+    lPinky1: Vector3
+    lPinky2: Vector3
+    rButtock: Vector3
     rThigh: Vector3
     rShin: Vector3
     rFoot: Vector3
+    lButtock: Vector3
+    lThigh: Vector3
+    lShin: Vector3
+    lFoot: Vector3
 
     def as_dict(self) -> Dict[str, Vector3]:
         """以字典形式返回关键点，保持名称顺序与 config.KEYPOINT_NAMES 一致。"""
@@ -161,6 +189,8 @@ def normalize_to_hip(raw_keypoints: Mapping[str, Sequence[float]]) -> BodyKeypoi
     normalized: Dict[str, Vector3] = {}
     for name in config.KEYPOINT_NAMES:
         if name not in raw_keypoints:
+            # 为了兼容性，如果某些关节缺失（例如不同BVH文件结构略有差异），
+            # 可以选择填充0或者抛出异常。这里严格要求所有配置的关键点都存在。
             raise KeyError(f"缺失关键点 {name}")
         vec = _ensure_vector(raw_keypoints[name]) - hip_vector
         # 应用精度控制
@@ -192,10 +222,6 @@ def compute_octant(point: Vector3, bbox: BoundingBox) -> int:
 def compute_combination_index(octants: MultiPointOctant) -> str:
     """
     将多个octant值（0-7）直接拼接成固定长度的字符串索引。
-    
-    注意：Hips作为原点不参与八叉树迭代，因此octants数量为6个（排除Hips后的关键点）。
-    例如：(2, 7, 3, 0, 4, 1) → "273041"
-          对应：(LeftHand, RightHand, Neck, LeftFoot, RightFoot, LowerBack)
     """
     return ''.join(str(octant) for octant in octants)
 
@@ -236,4 +262,3 @@ def coerce_body_keypoints(keypoints: KeypointInput) -> BodyKeypoints:
             converted[name] = _ensure_vector(value)
 
     return normalize_to_hip(converted)
-

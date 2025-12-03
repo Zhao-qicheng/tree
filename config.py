@@ -8,45 +8,56 @@ from __future__ import annotations
 
 from typing import Dict, Tuple
 
-# 关键点名称，使用BVH文件中的16个关键关节
+# 关键点名称，使用BVH文件中的43个关键关节
 # 这些关节将用于帧检索系统
 KEYPOINT_NAMES = (
-    "hip",        # 原点，始终为 [0, 0, 0]
-    "chest",      # 胸部
-    "neck",       # 颈部
-    "head",       # 头部
-    "lShldr",     # 左肩
-    "lForeArm",   # 左前臂
-    "lHand",      # 左手
-    "rShldr",     # 右肩
-    "rForeArm",   # 右前臂
-    "rHand",      # 右手
-    "lThigh",     # 左大腿
-    "lShin",      # 左小腿
-    "lFoot",      # 左脚
-    "rThigh",     # 右大腿
-    "rShin",      # 右小腿
-    "rFoot",      # 右脚
-)
-
-# 用于八叉树迭代的关键点（排除原点 hip）
-OCTREE_KEYPOINT_NAMES = (
+    "hip",
+    "abdomen",
     "chest",
     "neck",
     "head",
-    "lShldr",
-    "lForeArm",
-    "lHand",
+    "leftEye",
+    "rightEye",
+    "rCollar",
     "rShldr",
     "rForeArm",
     "rHand",
-    "lThigh",
-    "lShin",
-    "lFoot",
+    "rThumb1",
+    "rThumb2",
+    "rIndex1",
+    "rIndex2",
+    "rMid1",
+    "rMid2",
+    "rRing1",
+    "rRing2",
+    "rPinky1",
+    "rPinky2",
+    "lCollar",
+    "lShldr",
+    "lForeArm",
+    "lHand",
+    "lThumb1",
+    "lThumb2",
+    "lIndex1",
+    "lIndex2",
+    "lMid1",
+    "lMid2",
+    "lRing1",
+    "lRing2",
+    "lPinky1",
+    "lPinky2",
+    "rButtock",
     "rThigh",
     "rShin",
     "rFoot",
+    "lButtock",
+    "lThigh",
+    "lShin",
+    "lFoot",
 )
+
+# 用于八叉树迭代的关键点（排除原点 hip）
+OCTREE_KEYPOINT_NAMES = tuple(k for k in KEYPOINT_NAMES if k != "hip")
 
 # 八叉树相关配置
 MAX_DEPTH: int = 11
@@ -93,25 +104,34 @@ JOINT_PAIR_GROUPS: Tuple[Tuple[str, str], ...] = (
     ("lThigh", "lShin"),
     ("rThigh", "rShin"),
     ("lFoot", "rFoot"),
+    # 补充一些可能的关节对，可以根据实际需求调整
+    ("lCollar", "rCollar"),
+    ("abdomen", "chest"),
+    ("leftEye", "rightEye"),
+    ("rButtock", "lButtock"),
 )
 
 # 相似度计算权重（可根据关节重要性调整）
-JOINT_WEIGHTS: Dict[str, float] = {
-    "hip": 1.0,
-    "chest": 1.0,
+# 默认为1.0，可以根据需要进行微调
+JOINT_WEIGHTS: Dict[str, float] = {name: 1.0 for name in KEYPOINT_NAMES}
+# 对特定关节进行权重调整
+_CUSTOM_WEIGHTS = {
     "neck": 0.8,
     "head": 0.6,
     "lShldr": 0.8,
-    "lForeArm": 1.0,  # 前臂动作对手势识别重要
-    "lHand": 1.2,     # 手部动作更重要
+    "lForeArm": 1.0,
+    "lHand": 1.2,
     "rShldr": 0.8,
-    "rForeArm": 1.0,  # 前臂动作对手势识别重要
+    "rForeArm": 1.0,
     "rHand": 1.2,
-    "lThigh": 1.1,    # 大腿对步态识别重要
-    "lShin": 1.1,     # 小腿对步态识别重要
-    "lFoot": 1.2,     # 脚部动作更重要
-    "rThigh": 1.1,    # 大腿对步态识别重要
-    "rShin": 1.1,     # 小腿对步态识别重要
+    "lThigh": 1.1,
+    "lShin": 1.1,
+    "lFoot": 1.2,
+    "rThigh": 1.1,
+    "rShin": 1.1,
     "rFoot": 1.2,
+    # 手指部分的权重可以稍微降低，或者保持默认
+    "lThumb1": 0.8, "lThumb2": 0.8,
+    "rThumb1": 0.8, "rThumb2": 0.8,
 }
-
+JOINT_WEIGHTS.update(_CUSTOM_WEIGHTS)

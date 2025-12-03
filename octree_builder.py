@@ -209,4 +209,3 @@ def load_metadata(path: str) -> List[FrameMetadata]:
     """
     with open(path, "rb") as file:
         return pickle.load(file)
-
