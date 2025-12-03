@@ -108,7 +108,7 @@ JOINT_WEIGHTS: Dict[str, float] = {
 # ============================================================================
 
 # 是否启用多树模式（False则使用传统单树模式）
-ENABLE_MULTI_TREE: bool = False
+ENABLE_MULTI_TREE: bool = True
 
 # 旋转配置列表：定义每棵树的旋转参数
 # 每个配置包含：axis（旋转轴：'x'/'y'/'z'）和 angle（角度：度）
