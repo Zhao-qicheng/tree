@@ -8,6 +8,9 @@ import sys
 import time
 from pathlib import Path
 from typing import Optional, List, Tuple
+from dataclasses import dataclass
+from collections import Counter
+import json
 
 import numpy as np
 
@@ -19,7 +22,42 @@ from octree_node import ActionTreeNode
 import config
 
 
-_MODEL_CACHE: dict[Tuple[str, str], Tuple[ActionTreeNode, List[FrameMetadata]]] = {}
+@dataclass
+class LoadedPairTree:
+    label: str
+    keypoints: Tuple[str, ...]
+    tree: ActionTreeNode
+
+
+@dataclass
+class LoadedModelBundle:
+    metadata_list: List[FrameMetadata]
+    pair_trees: List[LoadedPairTree]
+    single_tree: Optional[ActionTreeNode]
+
+
+_MODEL_CACHE: dict[Tuple[str, str], LoadedModelBundle] = {}
+
+
+def _build_tree_base_path(model_tree_path: str) -> tuple[Path, str]:
+    path = Path(model_tree_path)
+    suffix = path.suffix or ".tree"
+    base = path.with_suffix("")
+    return base, suffix
+
+
+def _get_pair_index_path(model_tree_path: str) -> Path:
+    base, _ = _build_tree_base_path(model_tree_path)
+    return base.parent / f"{base.name}_pairs.json"
+
+
+def _load_pair_index(model_tree_path: str) -> Optional[List[dict]]:
+    index_path = _get_pair_index_path(model_tree_path)
+    if not index_path.exists():
+        return None
+    with open(index_path, "r", encoding="utf-8") as fp:
+        data = json.load(fp)
+    return data.get("pairs", [])
 
 
 def _estimate_node_distance(node: ActionTreeNode,
@@ -30,7 +68,7 @@ def _estimate_node_distance(node: ActionTreeNode,
     """
     total = 0.0
     count = 0
-    for name in config.OCTREE_KEYPOINT_NAMES:
+    for name in getattr(node, "keypoint_names", config.OCTREE_KEYPOINT_NAMES):
         if name not in keypoint_dict:
             continue
         bbox: BoundingBox | None = node.bboxes.get(name)
@@ -42,6 +80,25 @@ def _estimate_node_distance(node: ActionTreeNode,
     if count == 0:
         return float("inf")
     return total / count
+
+
+def _gather_candidates_from_pairs(pair_trees: List[LoadedPairTree],
+                                  query_keypoints: dict[str, np.ndarray],
+                                  min_candidates: int) -> list[str]:
+    counter: Counter[str] = Counter()
+    for pair_tree in pair_trees:
+        pair_candidates = find_candidate_frames_from_tree(
+            pair_tree.tree,
+            query_keypoints,
+            min_candidates=min_candidates,
+        )
+        for frame_id in pair_candidates:
+            counter[frame_id] += 1
+    if not counter:
+        return []
+    max_candidates = max(min_candidates, min_candidates * len(pair_trees))
+    sorted_ids = [frame_id for frame_id, _ in counter.most_common()]
+    return sorted_ids[:max_candidates]
 
 
 def find_candidate_frames_from_tree(tree: ActionTreeNode,
@@ -131,28 +188,49 @@ def find_candidate_frames_from_tree(tree: ActionTreeNode,
 def _load_model_once(model_tree_path: str,
                      model_metadata_path: str,
                      use_cache: bool = True,
-                     show_progress: bool = True) -> tuple[ActionTreeNode, List[FrameMetadata], bool]:
+                     show_progress: bool = True) -> tuple[LoadedModelBundle, bool]:
     """
     加载模型，如果启用缓存则返回内存中已有的模型。
 
     返回:
         (tree, metadata_list, from_cache)
     """
-    cache_key = (
-        str(Path(model_tree_path).resolve()),
-        str(Path(model_metadata_path).resolve()),
-    )
-    if use_cache and cache_key in _MODEL_CACHE:
-        tree, metadata_list = _MODEL_CACHE[cache_key]
-        return tree, metadata_list, True
+    tree_path_resolved = str(Path(model_tree_path).resolve())
+    metadata_path_resolved = str(Path(model_metadata_path).resolve())
+    cache_key = (tree_path_resolved, metadata_path_resolved)
 
-    tree = load_tree(model_tree_path, show_progress=show_progress)
+    if use_cache and cache_key in _MODEL_CACHE:
+        return _MODEL_CACHE[cache_key], True
+
     metadata_list = load_metadata(model_metadata_path)
 
-    if use_cache:
-        _MODEL_CACHE[cache_key] = (tree, metadata_list)
+    pair_entries = _load_pair_index(model_tree_path)
+    pair_trees: List[LoadedPairTree] = []
+    single_tree: Optional[ActionTreeNode] = None
 
-    return tree, metadata_list, False
+    if pair_entries:
+        base_dir = Path(model_tree_path).resolve().parent
+        for entry in pair_entries:
+            label = entry["label"]
+            keypoints = tuple(entry.get("keypoints", []))
+            tree_file = Path(entry["tree_file"])
+            if not tree_file.is_absolute():
+                tree_file = (base_dir / tree_file).resolve()
+            tree = load_tree(str(tree_file), show_progress=show_progress)
+            pair_trees.append(LoadedPairTree(label=label, keypoints=keypoints, tree=tree))
+    else:
+        single_tree = load_tree(model_tree_path, show_progress=show_progress)
+
+    bundle = LoadedModelBundle(
+        metadata_list=metadata_list,
+        pair_trees=pair_trees,
+        single_tree=single_tree,
+    )
+
+    if use_cache:
+        _MODEL_CACHE[cache_key] = bundle
+
+    return bundle, False
 
 
 def query_frame(query_keypoints: dict[str, np.ndarray],
@@ -163,6 +241,7 @@ def query_frame(query_keypoints: dict[str, np.ndarray],
                *,
                tree_instance: Optional[ActionTreeNode] = None,
                metadata_instance: Optional[List[FrameMetadata]] = None,
+               model_bundle: Optional[LoadedModelBundle] = None,
                use_cache: bool = True,
                enable_parallel: bool = True,
                parallel_workers: Optional[int] = None) -> List[SimilarityResult]:
@@ -190,29 +269,35 @@ def query_frame(query_keypoints: dict[str, np.ndarray],
         print("\n步骤1: 加载模型...")
     
     load_elapsed = 0.0
-    if tree_instance is not None and metadata_instance is not None:
-        tree = tree_instance
-        metadata_list = metadata_instance
+    if model_bundle is not None:
+        bundle = model_bundle
+        from_cache = True
+        if verbose:
+            print("  使用传入的模型缓存，无需重新加载。")
+    elif tree_instance is not None and metadata_instance is not None:
+        bundle = LoadedModelBundle(
+            metadata_list=metadata_instance,
+            pair_trees=[],
+            single_tree=tree_instance,
+        )
         from_cache = True
         if verbose:
             print("  使用传入的模型实例，无需重新加载。")
     else:
         load_start_time = time.time()
-        tree, metadata_list, from_cache = _load_model_once(
+        bundle, from_cache = _load_model_once(
             model_tree_path,
             model_metadata_path,
             use_cache=use_cache,
             show_progress=verbose,
         )
-        if from_cache:
-            if verbose:
-                print("  使用内存缓存的模型，无需再次读取磁盘。")
-        else:
+        if not from_cache:
             load_elapsed = time.time() - load_start_time
             if verbose:
-                print(f"  成功加载八叉树模型: {model_tree_path}")
-                print(f"  成功加载元数据: {model_metadata_path}")
-                print(f"  加载模型用时: {load_elapsed:.4f} 秒")
+                print(f"  成功加载模型资源 (耗时 {load_elapsed:.4f} 秒)")
+    metadata_list = bundle.metadata_list
+    pair_trees = bundle.pair_trees
+    tree = bundle.single_tree
     
     if verbose:
         print(f"  训练集帧数: {len(metadata_list)}")
@@ -236,7 +321,16 @@ def query_frame(query_keypoints: dict[str, np.ndarray],
     # 开始计时 - 八叉树定位
     tree_search_start_time = time.time()
     
-    candidate_frame_ids = find_candidate_frames_from_tree(tree, query_keypoints)
+    if pair_trees:
+        candidate_frame_ids = _gather_candidates_from_pairs(
+            pair_trees,
+            query_keypoints,
+            min_candidates=config.MIN_CANDIDATES,
+        )
+    else:
+        if tree is None:
+            raise RuntimeError("模型未加载：缺少单棵八叉树实例。")
+        candidate_frame_ids = find_candidate_frames_from_tree(tree, query_keypoints)
     
     tree_search_elapsed = time.time() - tree_search_start_time
     
@@ -395,6 +489,7 @@ def query_from_bvh(bvh_file: str,
                   *,
                   tree_instance: Optional[ActionTreeNode] = None,
                   metadata_instance: Optional[List[FrameMetadata]] = None,
+                  model_bundle: Optional[LoadedModelBundle] = None,
                   use_cache: bool = True,
                   enable_parallel: bool = True,
                   parallel_workers: Optional[int] = None) -> List[SimilarityResult]:
@@ -429,6 +524,7 @@ def query_from_bvh(bvh_file: str,
         verbose,
         tree_instance=tree_instance,
         metadata_instance=metadata_instance,
+        model_bundle=model_bundle,
         use_cache=use_cache,
         enable_parallel=enable_parallel,
         parallel_workers=parallel_workers,
@@ -446,14 +542,14 @@ def interactive_mode(model_tree_path: str,
     print("提示: 输入 \"<BVH路径> <帧索引>\", 或输入 q 退出。")
 
     load_start = time.time()
-    tree, metadata_list, from_cache = _load_model_once(
+    bundle, from_cache = _load_model_once(
         model_tree_path,
         model_metadata_path,
         use_cache=True,
         show_progress=True,
     )
     load_elapsed = 0.0 if from_cache else time.time() - load_start
-    print(f"\n模型已加载，帧数: {len(metadata_list)}，耗时: {load_elapsed:.2f} 秒")
+    print(f"\n模型已加载，帧数: {len(bundle.metadata_list)}，耗时: {load_elapsed:.2f} 秒")
 
     while True:
         try:
@@ -500,8 +596,7 @@ def interactive_mode(model_tree_path: str,
                 model_metadata_path=model_metadata_path,
                 top_k=top_k,
                 verbose=verbose,
-                tree_instance=tree,
-                metadata_instance=metadata_list,
+                model_bundle=bundle,
                 use_cache=True,
             )
         except Exception as exc:

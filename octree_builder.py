@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 import pickle
-from typing import Mapping, List
+from typing import Mapping, List, Iterable
 from pathlib import Path
 import sys
 
@@ -23,21 +23,31 @@ from data_structures import (
 from octree_node import ActionTreeNode
 
 
-def _create_root_bboxes() -> dict[str, BoundingBox]:
+def _create_root_bboxes(keypoint_names: Iterable[str]) -> dict[str, BoundingBox]:
     """创建根节点的包围盒，只包含用于八叉树迭代的关键点（不包括Hips）。"""
     return {
         name: BoundingBox.from_tuple(bounds)
         for name, bounds in config.ROOT_BOUNDING_BOXES.items()
-        if name in config.OCTREE_KEYPOINT_NAMES
+        if name in keypoint_names
     }
 
 
-def create_root_node() -> ActionTreeNode:
+def create_root_node(keypoint_names: Optional[Iterable[str]] = None) -> ActionTreeNode:
     """构建根节点，初始化所有关键点包围盒。"""
-    return ActionTreeNode(depth=0, bboxes=_create_root_bboxes(), parent=None)
+    if keypoint_names is None:
+        keypoint_names = config.OCTREE_KEYPOINT_NAMES
+    keypoint_tuple = tuple(keypoint_names)
+    return ActionTreeNode(
+        depth=0,
+        bboxes=_create_root_bboxes(keypoint_tuple),
+        parent=None,
+        keypoint_names=keypoint_tuple,
+    )
 
 
-def insert_frame(root: ActionTreeNode, keypoints: KeypointInput, frame_id: str) -> tuple[ActionTreeNode, list[str]]:
+def insert_frame(root: ActionTreeNode,
+                 keypoints: KeypointInput,
+                 frame_id: str) -> tuple[ActionTreeNode, list[str]]:
     """
     将单个帧插入八叉树，返回最终叶节点和每层的组合索引路径。
     
@@ -57,11 +67,13 @@ def insert_frame(root: ActionTreeNode, keypoints: KeypointInput, frame_id: str) 
     
     combination_indices: list[str] = []
 
+    keypoint_names = root.keypoint_names
+
     for _ in range(config.MAX_DEPTH):
         # 只为用于八叉树的关键点计算octant（不包括hip原点）
         octants: MultiPointOctant = tuple(
             compute_octant(keypoint_map[name], current.bboxes[name])
-            for name in config.OCTREE_KEYPOINT_NAMES
+            for name in keypoint_names
         )
         combination_index = compute_combination_index(octants)
         combination_indices.append(combination_index)
@@ -111,7 +123,7 @@ def _restore_parent_links(detached: list[tuple[ActionTreeNode, ActionTreeNode]],
 def save_tree(root: ActionTreeNode, path: str, show_progress: bool = True) -> None:
     """
     使用pickle保存八叉树到二进制文件。
-
+    
     保存前会临时清除所有parent引用以减少序列化体积和耗时，
     保存完成后再恢复引用。
     """

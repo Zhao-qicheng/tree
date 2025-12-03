@@ -83,6 +83,18 @@ MIN_CANDIDATES: int = 30  # 八叉树查询时的最小候选帧数量（约为�
 BEAM_WIDTH: int = 4  # 多分枝向下搜索时保留的候选节点数量
 MAX_BACKTRACK_DEPTH: int = 2  # 候选不足时允许回溯的最大层级
 
+# 关节对配置：每两个关键点构建一棵八叉树
+JOINT_PAIR_GROUPS: Tuple[Tuple[str, str], ...] = (
+    ("chest", "neck"),
+    ("head", "lShldr"),
+    ("head", "rShldr"),
+    ("lForeArm", "lHand"),
+    ("rForeArm", "rHand"),
+    ("lThigh", "lShin"),
+    ("rThigh", "rShin"),
+    ("lFoot", "rFoot"),
+)
+
 # 相似度计算权重（可根据关节重要性调整）
 JOINT_WEIGHTS: Dict[str, float] = {
     "hip": 1.0,

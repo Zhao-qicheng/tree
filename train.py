@@ -7,9 +7,10 @@ from __future__ import annotations
 import sys
 import time
 import os
+import json
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import numpy as np
 
@@ -64,6 +65,35 @@ def _load_frame_worker(payload: tuple[int, str]) -> dict:
         }
 
 
+def _normalize_joint_pairs() -> tuple[tuple[str, ...], ...]:
+    pairs = getattr(config, "JOINT_PAIR_GROUPS", ())
+    normalized = []
+    for pair in pairs:
+        pair_tuple = tuple(pair)
+        if len(pair_tuple) != 2:
+            raise ValueError("JOINT_PAIR_GROUPS 中的每个元素必须包含两个关节名称")
+        normalized.append(pair_tuple)
+    if normalized:
+        return tuple(normalized)
+    # 如果未配置，退回到单棵树（使用全量关键点）
+    return (tuple(config.OCTREE_KEYPOINT_NAMES),)
+
+
+def _build_tree_base_path(model_tree_path: str) -> tuple[Path, str]:
+    path = Path(model_tree_path)
+    suffix = path.suffix or ".tree"
+    base = path.with_suffix("")
+    return base, suffix
+
+
+def _build_pair_tree_path(base: Path, suffix: str, label: str) -> Path:
+    return base.with_name(f"{base.name}_{label}").with_suffix(suffix)
+
+
+def _build_pair_index_path(base: Path) -> Path:
+    return base.parent / f"{base.name}_pairs.json"
+
+
 def train_model(data_dir: str = "data_train/", 
                 model_tree_path: str = "model.tree",
                 model_metadata_path: str = "model.pkl",
@@ -74,7 +104,7 @@ def train_model(data_dir: str = "data_train/",
     
     参数:
         data_dir: 数据目录路径
-        model_tree_path: 八叉树模型保存路径
+        model_tree_path: 八叉树模型保存路径（多棵树时作为前缀）
         model_metadata_path: 元数据保存路径
         verbose: 是否打印详细信息
         num_workers: 并行加载BVH的进程数（None表示自动选择）
@@ -101,17 +131,29 @@ def train_model(data_dir: str = "data_train/",
         for bvh_file in bvh_files:
             print(f"  - {Path(bvh_file).name}")
     
-    # 2. 创建八叉树根节点
+    # 2. 创建八叉树根节点（每个关节对一棵树）
+    joint_pairs = _normalize_joint_pairs()
+    use_multi_tree = len(joint_pairs) > 1 or joint_pairs[0] != tuple(config.OCTREE_KEYPOINT_NAMES)
+    pair_trees: dict[str, dict] = {}
+
     if verbose:
         print("\n步骤2: 创建八叉树根节点...")
+        if use_multi_tree:
+            print(f"启用多棵树模式，共 {len(joint_pairs)} 个关节对。")
+        else:
+            print("使用单棵树（全量关键点）模式。")
     
-    root = create_root_node()
-    if verbose:
-        print(f"根节点创建成功，深度: {root.depth}")
-        print(f"八叉树使用的关键点数量: {len(config.OCTREE_KEYPOINT_NAMES)}")
-        print(f"关键点: {', '.join(config.OCTREE_KEYPOINT_NAMES)}")
+    for pair in joint_pairs:
+        label = "_".join(pair)
+        root = create_root_node(pair)
+        pair_trees[label] = {
+            "keypoints": pair,
+            "root": root,
+        }
+        if verbose:
+            print(f"  - 关节对 {label} -> 八叉树关键点: {', '.join(pair)}")
     
-    # 3. 遍历所有文件和帧，插入到八叉树
+    # 3. 遍历所有文件和帧，插入到每棵八叉树
     if verbose:
         print("\n步骤3: 加载并插入所有帧...")
     
@@ -119,7 +161,6 @@ def train_model(data_dir: str = "data_train/",
     total_frames = 0
     error_count = 0
     
-    # 记录总开始时间
     total_start_time = time.time()
     
     executor: ProcessPoolExecutor | None = None
@@ -133,7 +174,6 @@ def train_model(data_dir: str = "data_train/",
                 if verbose:
                     print(f"\n处理文件: {Path(bvh_file).name} ({frame_count} 帧)")
                 
-                # 记录当前文件开始时间
                 file_start_time = time.time()
                 file_frame_count = 0
                 
@@ -151,7 +191,8 @@ def train_model(data_dir: str = "data_train/",
                         keypoints = result["keypoints"]
                         frame_id = result["frame_id"]
 
-                        insert_frame(root, keypoints, frame_id)
+                        for pair_data in pair_trees.values():
+                            insert_frame(pair_data["root"], keypoints, frame_id)
 
                         metadata = FrameMetadata(
                             bvh_file=result["bvh_file"],
@@ -160,10 +201,10 @@ def train_model(data_dir: str = "data_train/",
                             keypoints=result["rounded_keypoints"],
                         )
                         metadata_list.append(metadata)
-
+                        
                         total_frames += 1
                         file_frame_count += 1
-
+                        
                         if verbose and total_frames % 100 == 0:
                             print(f"  已处理 {total_frames} 帧...", end='\r')
                     else:
@@ -171,16 +212,15 @@ def train_model(data_dir: str = "data_train/",
                         if verbose:
                             print(f"  警告: 无法加载帧 {result['frame_index']}: {result['error']}")
                 
-                # 文件处理完成，输出该文件用时和总时长
                 file_elapsed = time.time() - file_start_time
                 total_elapsed = time.time() - total_start_time
                 
                 if verbose:
                     avg = file_elapsed / file_frame_count if file_frame_count else 0
                     print(f"  ✓ 完成 {Path(bvh_file).name}: {file_frame_count} 帧")
-                    print(f"  文件用时: {file_elapsed:.2f} 秒 (平均: {avg:.4f} 秒/帧)")
-                    print(f"  总时长: {total_elapsed:.2f} 秒")
-        
+                    print(f"    文件用时: {file_elapsed:.2f} 秒 (平均: {avg:.4f} 秒/帧)")
+                    print(f"    总时长: {total_elapsed:.2f} 秒")
+            
             except Exception as e:
                 if verbose:
                     print(f"  错误: 无法处理文件 {Path(bvh_file).name}: {e}")
@@ -193,41 +233,41 @@ def train_model(data_dir: str = "data_train/",
         print(f"  成功加载帧数: {total_frames}")
         print(f"  错误帧数: {error_count}")
     
-    # 4. 统计树结构信息
+    # 4. 保存模型
     if verbose:
-        print("\n步骤4: 统计树结构...")
-        node_count = count_nodes(root)
-        leaf_count = count_leaf_nodes(root)
-        max_frames_in_leaf = get_max_frames_in_leaf(root)
-        
-        print(f"  总节点数: {node_count}")
-        print(f"  叶节点数: {leaf_count}")
-        print(f"  单个叶节点最大帧数: {max_frames_in_leaf}")
+        print("\n步骤4: 保存模型...")
     
-    # 5. 保存模型
+    base_path, suffix = _build_tree_base_path(model_tree_path)
+    pair_index_entries = []
+    total_tree_size = 0.0
+
+    for label, pair_data in pair_trees.items():
+        tree_path = _build_pair_tree_path(base_path, suffix, label)
+        save_tree(pair_data["root"], str(tree_path), show_progress=verbose)
+        size_mb = Path(tree_path).stat().st_size / 1024 / 1024
+        total_tree_size += size_mb
+        pair_index_entries.append({
+            "label": label,
+            "keypoints": list(pair_data["keypoints"]),
+            "tree_file": str(tree_path),
+        })
+        if verbose:
+            print(f"  八叉树[{label}] -> {tree_path} ({size_mb:.2f} MB)")
+
+    pair_index_path = _build_pair_index_path(base_path)
+    with open(pair_index_path, "w", encoding="utf-8") as index_file:
+        json.dump({"pairs": pair_index_entries}, index_file, ensure_ascii=False, indent=2)
     if verbose:
-        print("\n步骤5: 保存模型...")
-    
-    save_tree(root, model_tree_path, show_progress=verbose)
-    if verbose:
-        print(f"  八叉树已保存到: {model_tree_path}")
-    
+        print(f"  关节对索引已保存到: {pair_index_path}")
+
     save_metadata(metadata_list, model_metadata_path)
+    metadata_size = Path(model_metadata_path).stat().st_size / 1024 / 1024
     if verbose:
-        print(f"  元数据已保存到: {model_metadata_path}")
-        
-        # 显示文件大小
-        tree_size = Path(model_tree_path).stat().st_size / 1024 / 1024
-        metadata_size = Path(model_metadata_path).stat().st_size / 1024 / 1024
-        print(f"  树文件大小: {tree_size:.2f} MB")
-        print(f"  元数据文件大小: {metadata_size:.2f} MB")
-    
-    if verbose:
+        print(f"  元数据已保存到: {model_metadata_path} ({metadata_size:.2f} MB)")
+        print(f"  树文件总大小: {total_tree_size:.2f} MB")
         print("\n" + "=" * 80)
         print("训练完成！")
         print("=" * 80)
-
-
 def count_nodes(node) -> int:
     """递归统计节点数。"""
     count = 1
