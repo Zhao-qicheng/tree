@@ -5,7 +5,7 @@
 # 忽略生成的参数文件
 *.pkl
 *.tree
-
+*.npz
 
 
 data_test/

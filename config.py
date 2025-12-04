@@ -79,9 +79,9 @@ JSON_INDENT: int = 2
 # 查询配置
 TOP_K: int = 5  # 返回最相似的K个帧
 EXACT_MATCH_EPSILON: float = 1  # 精确匹配的距离阈值
-MIN_CANDIDATES: int = 30  # 八叉树查询时的最小候选帧数量（约为总数的1%）
+MIN_CANDIDATES: int = 1000  # 八叉树查询时的最小候选帧数量（约为总数的1%）
 BEAM_WIDTH: int = 100  # 多分枝向下搜索时保留的候选节点数量
-MAX_BACKTRACK_DEPTH: int = 5  # 候选不足时允许回溯的最大层级
+MAX_BACKTRACK_DEPTH: int = 3  # 候选不足时允许回溯的最大层级
 
 # 相似度计算权重（可根据关节重要性调整）
 JOINT_WEIGHTS: Dict[str, float] = {

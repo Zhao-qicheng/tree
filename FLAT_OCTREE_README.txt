@@ -32,8 +32,8 @@ python train.py --output-tree my_model.npz
 ### 3. 查询命令
 查询命令自动适配 `.npz` 格式。
 
-# 单帧查询
-python query.py --bvh-file test.bvh --frame-index 10 --model-tree model.npz
+# 单帧查询(单树查询)
+python query.py --bvh-file data_test/09_09.bvh --frame-index 10 --model-tree model_tree0_z0.tree.npz --model-metadata model_tree0_z0.pkl
 
 # 交互式模式
 python query.py --interactive --model-tree model.npz

@@ -123,10 +123,10 @@ class RotationConfig:
         生成此树的模型文件名。
         
         示例:
-            tree_id=0: "model_tree0_z0.tree"
-            tree_id=1: "model_tree1_z30.tree"
+            tree_id=0: "model_tree0_z0.tree.npz"
+            tree_id=1: "model_tree1_z30.tree.npz"
         """
-        return f"{base_name}_tree{self.tree_id}_{self.axis}{int(self.angle)}.tree"
+        return f"{base_name}_tree{self.tree_id}_{self.axis}{int(self.angle)}.tree.npz"
     
     def get_metadata_filename(self, base_name: str = "model") -> str:
         """生成此树的元数据文件名。"""
