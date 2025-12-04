@@ -6,10 +6,13 @@
 *.pkl
 *.tree
 *.npz
-
+*.bvh
 
 data_test/
 data_train/
+big_data/
+
+
 
 
 *.pyc
