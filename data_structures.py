@@ -94,22 +94,55 @@ class BodyKeypoints:
             yield name, getattr(self, name)
 
 
-@dataclass
 class FrameMetadata:
     """
     单个帧的元数据，用于帧检索系统。
     
     存储帧的完整信息，包括原始文件、帧索引和关键点坐标。
+    内部使用紧凑的numpy数组存储关键点以节省内存。
     """
-    bvh_file: str  # BVH文件路径
-    frame_index: int  # 帧索引
-    frame_id: str  # 唯一标识，格式如 "01_01_frame_0042"
-    keypoints: Dict[str, Vector3]  # 关键点坐标（6位小数精度）
-    
-    def __post_init__(self):
-        """确保关键点坐标精度为6位小数。"""
-        for name, vec in self.keypoints.items():
-            self.keypoints[name] = np.round(vec, config.JSON_FLOAT_PRECISION)
+    __slots__ = ("bvh_file", "frame_index", "frame_id", "_keypoints_array")
+
+    def __init__(self, bvh_file: str, frame_index: int, frame_id: str, keypoints: Union[Dict[str, Vector3], np.ndarray]):
+        self.bvh_file = bvh_file
+        self.frame_index = frame_index
+        self.frame_id = frame_id
+        
+        if isinstance(keypoints, np.ndarray):
+            if keypoints.ndim != 2 or keypoints.shape[1] != 3:
+                # 尝试重塑
+                if keypoints.size % 3 == 0:
+                    keypoints = keypoints.reshape(-1, 3)
+                else:
+                    raise ValueError(f"keypoints array must be shape (N, 3), got {keypoints.shape}")
+            self._keypoints_array = keypoints.astype(np.float32)
+        else:
+            # Convert dict to array
+            num_joints = len(config.KEYPOINT_NAMES)
+            self._keypoints_array = np.zeros((num_joints, 3), dtype=np.float32)
+            for i, name in enumerate(config.KEYPOINT_NAMES):
+                if name in keypoints:
+                    vec = keypoints[name]
+                    self._keypoints_array[i] = np.round(vec, config.JSON_FLOAT_PRECISION).astype(np.float32)
+                else:
+                    # 如果缺失，填0或处理
+                    pass
+
+    @property
+    def keypoints(self) -> Dict[str, Vector3]:
+        """返回关键点字典，保持向后兼容。"""
+        kps = {}
+        for i, name in enumerate(config.KEYPOINT_NAMES):
+             if i < len(self._keypoints_array):
+                 kps[name] = self._keypoints_array[i].astype(np.float64)
+        return kps
+        
+    def get_keypoints_array(self) -> np.ndarray:
+        """获取原始关键点数组 (float32)"""
+        return self._keypoints_array
+
+    def __repr__(self):
+        return f"FrameMetadata(bvh_file='{self.bvh_file}', frame_index={self.frame_index}, frame_id='{self.frame_id}')"
 
 
 @dataclass(frozen=True)

@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict, Optional, Union
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
 import os
@@ -13,6 +13,14 @@ import numpy as np
 
 import config
 from data_structures import FrameMetadata, KeypointInput, coerce_body_keypoints
+
+
+# 预计算权重数组，用于快速计算
+_OCTREE_WEIGHTS_ARRAY = np.zeros(len(config.KEYPOINT_NAMES), dtype=np.float32)
+for i, name in enumerate(config.KEYPOINT_NAMES):
+    # 只计算八叉树使用的关键点（不包括hip原点）
+    if name in config.OCTREE_KEYPOINT_NAMES:
+        _OCTREE_WEIGHTS_ARRAY[i] = config.JOINT_WEIGHTS.get(name, 1.0)
 
 
 @dataclass
@@ -32,20 +40,23 @@ class SimilarityResult:
     is_exact_match: bool
 
 
-def compute_weighted_distance(query_keypoints: Dict[str, np.ndarray], 
-                              stored_keypoints: Dict[str, np.ndarray]) -> float:
+def compute_weighted_distance(query_keypoints: Union[Dict[str, np.ndarray], np.ndarray], 
+                              stored_keypoints: Union[Dict[str, np.ndarray], np.ndarray]) -> float:
     """
     计算两组关键点之间的加权欧氏距离。
     
-    使用config.JOINT_WEIGHTS定义的权重，重要关节（如手、脚）权重更高。
-    
-    参数:
-        query_keypoints: 查询帧的关键点坐标字典
-        stored_keypoints: 存储帧的关键点坐标字典
-    
-    返回:
-        加权距离值（越小表示越相似）
+    支持字典或numpy数组输入。如果输入为numpy数组，将使用向量化计算加速。
     """
+    # 向量化路径
+    if isinstance(query_keypoints, np.ndarray) and isinstance(stored_keypoints, np.ndarray):
+        # 假设shape均为 (43, 3)
+        diff = query_keypoints - stored_keypoints
+        # axis=1 计算每个关节的欧氏距离 -> (43,)
+        dists = np.linalg.norm(diff, axis=1)
+        # 加权求和
+        return float(np.dot(dists, _OCTREE_WEIGHTS_ARRAY))
+
+    # 字典路径 (慢速回退)
     total_distance = 0.0
     
     # 只计算八叉树使用的关键点（不包括hip原点）
@@ -123,16 +134,19 @@ def find_similar_frames(query_keypoints: KeypointInput,
     if top_k is None:
         top_k = config.TOP_K
     
-    # 标准化查询关键点
+    # 预处理查询关键点为数组，加速计算
     body = coerce_body_keypoints(query_keypoints)
-    query_keypoint_dict = body.as_dict()
+    query_array = np.zeros((len(config.KEYPOINT_NAMES), 3), dtype=np.float32)
+    for i, name in enumerate(config.KEYPOINT_NAMES):
+        query_array[i] = getattr(body, name)
     
     candidate_count = len(metadata_list)
     if candidate_count == 0:
         return []
 
     def compute_for_metadata(metadata: FrameMetadata) -> SimilarityResult:
-        distance = compute_weighted_distance(query_keypoint_dict, metadata.keypoints)
+        # 使用数组进行快速距离计算
+        distance = compute_weighted_distance(query_array, metadata.get_keypoints_array())
         similarity_score = compute_similarity_score(distance)
         exact_match = is_exact_match(distance)
         return SimilarityResult(
