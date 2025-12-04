@@ -114,6 +114,12 @@ JOINT_PAIR_GROUPS: Tuple[Tuple[str, str], ...] = (
 # 相似度计算权重（可根据关节重要性调整）
 # 默认为1.0，可以根据需要进行微调
 JOINT_WEIGHTS: Dict[str, float] = {name: 1.0 for name in KEYPOINT_NAMES}
+
+# 坐标系旋转增强配置
+# 通过构建多个旋转坐标系的树来解决边界附近的点被分割的问题
+# 建议值: [0, 30, 60] 或 [0, 45]
+ROTATION_ANGLES: Tuple[int, ...] = (0,)
+
 # 对特定关节进行权重调整
 _CUSTOM_WEIGHTS = {
     "neck": 0.8,

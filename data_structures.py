@@ -295,3 +295,44 @@ def coerce_body_keypoints(keypoints: KeypointInput) -> BodyKeypoints:
             converted[name] = _ensure_vector(value)
 
     return normalize_to_hip(converted)
+
+
+def rotate_point_y(point: Vector3, angle_degrees: float) -> Vector3:
+    """
+    绕Y轴旋转点。
+    
+    Args:
+        point: [x, y, z] 向量
+        angle_degrees: 旋转角度（度）
+    
+    Returns:
+        旋转后的新向量
+    """
+    if angle_degrees == 0:
+        return point
+    
+    theta = np.radians(angle_degrees)
+    c, s = np.cos(theta), np.sin(theta)
+    
+    x, y, z = point
+    # 顺时针/逆时针取决于坐标系定义，这里使用标准旋转矩阵：
+    # x' = x*cos - z*sin
+    # z' = x*sin + z*cos
+    # 注意：BVH通常是Y轴向上。
+    new_x = x * c - z * s
+    new_z = x * s + z * c
+    
+    return np.array([new_x, y, new_z], dtype=point.dtype)
+
+
+def rotate_keypoints(keypoints: Dict[str, Vector3], angle_degrees: float) -> Dict[str, Vector3]:
+    """
+    旋转所有关键点。
+    """
+    if angle_degrees == 0:
+        return keypoints.copy()
+        
+    return {
+        k: rotate_point_y(v, angle_degrees)
+        for k, v in keypoints.items()
+    }

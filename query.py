@@ -17,7 +17,7 @@ import numpy as np
 from data_loader import load_keypoints_from_bvh
 from octree_builder import load_tree, load_metadata
 from similarity import find_similar_frames_in_candidates, SimilarityResult
-from data_structures import coerce_body_keypoints, compute_octant, FrameMetadata, BoundingBox
+from data_structures import coerce_body_keypoints, compute_octant, FrameMetadata, BoundingBox, rotate_keypoints
 from octree_node import ActionTreeNode
 import config
 
@@ -27,6 +27,7 @@ class LoadedPairTree:
     label: str
     keypoints: Tuple[str, ...]
     tree: ActionTreeNode
+    rotation: float = 0.0
 
 
 @dataclass
@@ -86,10 +87,21 @@ def _gather_candidates_from_pairs(pair_trees: List[LoadedPairTree],
                                   query_keypoints: dict[str, np.ndarray],
                                   min_candidates: int) -> list[str]:
     counter: Counter[str] = Counter()
+    
+    # 缓存不同角度旋转后的查询关键点
+    rotated_queries: dict[float, dict[str, np.ndarray]] = {}
+    
     for pair_tree in pair_trees:
+        angle = pair_tree.rotation
+        if angle not in rotated_queries:
+             if angle == 0:
+                 rotated_queries[angle] = query_keypoints
+             else:
+                 rotated_queries[angle] = rotate_keypoints(query_keypoints, angle)
+             
         pair_candidates = find_candidate_frames_from_tree(
             pair_tree.tree,
-            query_keypoints,
+            rotated_queries[angle],
             min_candidates=min_candidates,
         )
         for frame_id in pair_candidates:
@@ -213,11 +225,12 @@ def _load_model_once(model_tree_path: str,
         for entry in pair_entries:
             label = entry["label"]
             keypoints = tuple(entry.get("keypoints", []))
+            rotation = float(entry.get("rotation", 0.0))
             tree_file = Path(entry["tree_file"])
             if not tree_file.is_absolute():
                 tree_file = (base_dir / tree_file).resolve()
             tree = load_tree(str(tree_file), show_progress=show_progress)
-            pair_trees.append(LoadedPairTree(label=label, keypoints=keypoints, tree=tree))
+            pair_trees.append(LoadedPairTree(label=label, keypoints=keypoints, tree=tree, rotation=rotation))
     else:
         single_tree = load_tree(model_tree_path, show_progress=show_progress)
 
@@ -619,8 +632,13 @@ def main():
     args = parser.parse_args()
     
     try:
-        if not Path(args.model_tree).exists():
-            print(f"错误: 树模型文件不存在: {args.model_tree}")
+        # 检查模型文件是否存在 (支持单树模式或多树索引模式)
+        tree_path = Path(args.model_tree)
+        index_path = _get_pair_index_path(args.model_tree)
+        
+        if not tree_path.exists() and not index_path.exists():
+            print(f"错误: 模型文件不存在: {args.model_tree}")
+            print(f"      且未找到索引文件: {index_path}")
             print("请先运行 train.py 训练模型")
             sys.exit(1)
         

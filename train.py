@@ -15,7 +15,7 @@ from typing import List, Optional, Tuple
 import numpy as np
 
 from data_loader import load_all_bvh_files, get_bvh_frame_count, load_keypoints_from_bvh
-from data_structures import FrameMetadata
+from data_structures import FrameMetadata, rotate_keypoints
 from octree_builder import create_root_node, insert_frame, save_tree, save_metadata
 import config
 
@@ -133,25 +133,33 @@ def train_model(data_dir: str = "data_train/",
     
     # 2. 创建八叉树根节点（每个关节对一棵树）
     joint_pairs = _normalize_joint_pairs()
-    use_multi_tree = len(joint_pairs) > 1 or joint_pairs[0] != tuple(config.OCTREE_KEYPOINT_NAMES)
+    rotation_angles = getattr(config, "ROTATION_ANGLES", (0,))
+    
+    use_multi_tree = len(joint_pairs) > 1 or joint_pairs[0] != tuple(config.OCTREE_KEYPOINT_NAMES) or len(rotation_angles) > 1
     pair_trees: dict[str, dict] = {}
 
     if verbose:
         print("\n步骤2: 创建八叉树根节点...")
         if use_multi_tree:
-            print(f"启用多棵树模式，共 {len(joint_pairs)} 个关节对。")
+            print(f"启用多树模式，共 {len(joint_pairs)} 个关节对，每个对 {len(rotation_angles)} 个旋转角度。")
         else:
             print("使用单棵树（全量关键点）模式。")
     
     for pair in joint_pairs:
-        label = "_".join(pair)
-        root = create_root_node(pair)
-        pair_trees[label] = {
-            "keypoints": pair,
-            "root": root,
-        }
-        if verbose:
-            print(f"  - 关节对 {label} -> 八叉树关键点: {', '.join(pair)}")
+        for angle in rotation_angles:
+            base_label = "_".join(pair)
+            label = base_label
+            if angle != 0:
+                label = f"{base_label}_rot{angle}"
+                
+            root = create_root_node(pair)
+            pair_trees[label] = {
+                "keypoints": pair,
+                "root": root,
+                "angle": angle,
+            }
+            if verbose:
+                print(f"  - [{label}] 关节: {', '.join(pair)}, 旋转: {angle}°")
     
     # 3. 遍历所有文件和帧，插入到每棵八叉树
     if verbose:
@@ -191,8 +199,18 @@ def train_model(data_dir: str = "data_train/",
                         keypoints = result["keypoints"]
                         frame_id = result["frame_id"]
 
+                        # 预计算旋转后的关键点
+                        rotation_angles = getattr(config, "ROTATION_ANGLES", (0,))
+                        rotated_cache = {}
+                        for angle in rotation_angles:
+                            if angle == 0:
+                                rotated_cache[angle] = keypoints
+                            else:
+                                rotated_cache[angle] = rotate_keypoints(keypoints, angle)
+
                         for pair_data in pair_trees.values():
-                            insert_frame(pair_data["root"], keypoints, frame_id)
+                            angle = pair_data["angle"]
+                            insert_frame(pair_data["root"], rotated_cache[angle], frame_id)
 
                         metadata = FrameMetadata(
                             bvh_file=result["bvh_file"],
@@ -250,6 +268,7 @@ def train_model(data_dir: str = "data_train/",
             "label": label,
             "keypoints": list(pair_data["keypoints"]),
             "tree_file": str(tree_path),
+            "rotation": pair_data["angle"],
         })
         if verbose:
             print(f"  八叉树[{label}] -> {tree_path} ({size_mb:.2f} MB)")
