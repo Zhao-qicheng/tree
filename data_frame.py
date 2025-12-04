@@ -277,6 +277,8 @@ def get_all_joints(frame_index, bvh_file='walk.bvh', relative_to_hips=True, unit
     return result
 
 
+
+
 def get_frame_count(bvh_file='walk.bvh'):
     """
     获取BVH文件的总帧数
@@ -289,3 +291,42 @@ def get_frame_count(bvh_file='walk.bvh'):
     """
     cache = load_bvh_file(bvh_file)
     return cache['mocap'].nframes
+
+
+# =============================================================================
+# BVH 缓存管理函数
+# =============================================================================
+
+def clear_bvh_cache():
+    """
+    清理所有 BVH 文件缓存，释放内存。
+    
+    在训练过程中，每处理完一个文件后调用此函数可以显著降低内存占用。
+    """
+    global _bvh_cache
+    _bvh_cache.clear()
+
+
+def get_cache_size():
+    """
+    获取当前缓存的文件数量。
+    
+    返回:
+        int: 缓存中的文件数量
+    """
+    global _bvh_cache
+    return len(_bvh_cache)
+
+
+def clear_specific_file(bvh_file):
+    """
+    清理特定文件的缓存。
+    
+    参数:
+        bvh_file: BVH文件路径
+    """
+    global _bvh_cache
+    import os
+    bvh_file = os.path.abspath(bvh_file)
+    if bvh_file in _bvh_cache:
+        del _bvh_cache[bvh_file]

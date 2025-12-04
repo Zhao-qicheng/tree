@@ -7,6 +7,7 @@ from __future__ import annotations
 import sys
 import time
 import os
+import gc
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Optional
@@ -14,6 +15,7 @@ from typing import List, Optional
 import numpy as np
 
 from data_loader import load_all_bvh_files, get_bvh_frame_count, load_keypoints_from_bvh
+from data_frame import clear_specific_file
 from data_structures import FrameMetadata
 from octree_builder import create_root_node, insert_frame, save_tree, save_metadata
 from rotation_utils import create_custom_rotation_configs, RotationConfig
@@ -160,6 +162,22 @@ def train_single_tree(data_dir: str,
                     avg = file_elapsed / file_frame_count if file_frame_count else 0
                     print(f"  ✓ 完成 {Path(bvh_file).name}: {file_frame_count} 帧")
                     print(f"  文件用时: {file_elapsed:.2f} 秒 (平均: {avg:.4f} 秒/帧)")
+                
+                # 清理当前文件的 BVH 缓存，释放内存
+                clear_specific_file(bvh_file)
+                
+                # 强制垃圾回收
+                gc.collect()
+                
+                # 可选：显示内存使用情况
+                if verbose:
+                    try:
+                        import psutil
+                        process = psutil.Process()
+                        mem_mb = process.memory_info().rss / 1024 / 1024
+                        print(f"  [内存] 当前占用: {mem_mb:.1f} MB")
+                    except ImportError:
+                        pass
         
             except Exception as e:
                 if verbose:
