@@ -19,6 +19,7 @@ from octree_builder import load_tree, load_metadata
 from similarity import find_similar_frames_in_candidates, SimilarityResult
 from data_structures import coerce_body_keypoints, compute_octant, FrameMetadata, BoundingBox, rotate_keypoints
 from octree_node import ActionTreeNode
+from flat_octree import FlatOctree
 import config
 
 
@@ -26,7 +27,7 @@ import config
 class LoadedPairTree:
     label: str
     keypoints: Tuple[str, ...]
-    tree: ActionTreeNode
+    tree: ActionTreeNode | FlatOctree
     rotation: float = 0.0
 
 
@@ -34,7 +35,7 @@ class LoadedPairTree:
 class LoadedModelBundle:
     metadata_list: List[FrameMetadata]
     pair_trees: List[LoadedPairTree]
-    single_tree: Optional[ActionTreeNode]
+    single_tree: Optional[ActionTreeNode | FlatOctree]
 
 
 _MODEL_CACHE: dict[Tuple[str, str], LoadedModelBundle] = {}
@@ -113,31 +114,26 @@ def _gather_candidates_from_pairs(pair_trees: List[LoadedPairTree],
     return sorted_ids[:max_candidates]
 
 
-def find_candidate_frames_from_tree(tree: ActionTreeNode,
+def find_candidate_frames_from_tree(tree: ActionTreeNode | FlatOctree,
                                     query_keypoints: dict[str, np.ndarray],
                                     min_candidates: int = None) -> list[str]:
     """
-    使用八叉树空间索引查找候选帧。
-    
-    通过在八叉树中向下遍历，定位到查询帧所在的叶节点，获取候选帧ID列表。
-    如果候选数量不足，向上回溯父节点扩充候选集。
-    
-    参数:
-        tree: 八叉树根节点
-        query_keypoints: 查询帧的关键点坐标
-        min_candidates: 最小候选帧数量（默认使用config.MIN_CANDIDATES）
-    
-    返回:
-        候选帧ID列表
+    使用八叉树空间索引查找候选帧，支持传统对象树与扁平化结构。
     """
+    if isinstance(tree, FlatOctree):
+        return _find_candidates_flat(tree, query_keypoints, min_candidates)
+    return _find_candidates_traditional(tree, query_keypoints, min_candidates)
+
+
+def _find_candidates_traditional(tree: ActionTreeNode,
+                                 query_keypoints: dict[str, np.ndarray],
+                                 min_candidates: int = None) -> list[str]:
     if min_candidates is None:
         min_candidates = config.MIN_CANDIDATES
     
-    # 标准化查询关键点
     body = coerce_body_keypoints(query_keypoints)
     keypoint_dict = body.as_dict()
     
-    # 1. 使用 Beam Search 在八叉树中向下遍历，避免单一路径失效
     beam_width = max(1, getattr(config, "BEAM_WIDTH", 4))
     beam_nodes: list[tuple[ActionTreeNode, float]] = [(tree, 0.0)]
     leaf_nodes: list[ActionTreeNode] = []
@@ -172,7 +168,6 @@ def find_candidate_frames_from_tree(tree: ActionTreeNode,
                 candidate_frame_ids.append(frame_id)
                 seen_frame_ids.add(frame_id)
     
-    # 2. 控制回溯层级：仅在必要时回溯少量层级，避免候选集膨胀
     current_layer = candidate_nodes
     backtrack_depth = 0
     max_backtrack_depth = getattr(config, "MAX_BACKTRACK_DEPTH", 2)
@@ -195,6 +190,92 @@ def find_candidate_frames_from_tree(tree: ActionTreeNode,
         backtrack_depth += 1
     
     return candidate_frame_ids
+
+
+def _find_candidates_flat(flat: FlatOctree,
+                          query_keypoints: dict[str, np.ndarray],
+                          min_candidates: int = None) -> list[str]:
+    if min_candidates is None:
+        min_candidates = config.MIN_CANDIDATES
+
+    body = coerce_body_keypoints(query_keypoints)
+    keypoint_dict = body.as_dict()
+    query_vec = np.stack([keypoint_dict[name] for name in flat.keypoint_names])
+
+    beam_width = max(1, getattr(config, "BEAM_WIDTH", 4))
+    current_nodes = np.array([0], dtype=np.int32)
+    leaf_nodes: list[int] = []
+
+    for _ in range(config.MAX_DEPTH):
+        candidate_indices: list[np.ndarray] = []
+        candidate_scores: list[np.ndarray] = []
+        for node_idx in current_nodes:
+            child_indices = flat.get_children_indices(int(node_idx))
+            if child_indices.size == 0:
+                leaf_nodes.append(int(node_idx))
+                continue
+            scores = _compute_node_distances_batch(flat, child_indices, query_vec)
+            candidate_indices.append(child_indices)
+            candidate_scores.append(scores)
+        if not candidate_indices:
+            break
+        merged_indices = np.concatenate(candidate_indices)
+        merged_scores = np.concatenate(candidate_scores)
+        order = np.argsort(merged_scores)[:beam_width]
+        current_nodes = merged_indices[order]
+
+    candidate_nodes = list(dict.fromkeys([int(idx) for idx in current_nodes.tolist() + leaf_nodes]))
+
+    candidate_frame_ids: list[str] = []
+    seen_frame_ids: set[str] = set()
+    visited_nodes: set[int] = set(candidate_nodes)
+
+    for node_idx in candidate_nodes:
+        _append_flat_frames(flat, node_idx, candidate_frame_ids, seen_frame_ids)
+
+    current_layer = candidate_nodes
+    backtrack_depth = 0
+    max_backtrack_depth = getattr(config, "MAX_BACKTRACK_DEPTH", 2)
+
+    while (len(candidate_frame_ids) < min_candidates and
+           current_layer and
+           backtrack_depth < max_backtrack_depth):
+        parents: list[int] = []
+        for node_idx in current_layer:
+            parent_idx = int(flat.node_parent_idx[node_idx])
+            if parent_idx < 0 or parent_idx in visited_nodes:
+                continue
+            visited_nodes.add(parent_idx)
+            parents.append(parent_idx)
+            _append_flat_frames(flat, parent_idx, candidate_frame_ids, seen_frame_ids)
+        current_layer = parents
+        backtrack_depth += 1
+
+    return candidate_frame_ids
+
+
+def _compute_node_distances_batch(flat: FlatOctree,
+                                  node_indices: np.ndarray,
+                                  query_vec: np.ndarray) -> np.ndarray:
+    """
+    计算多个节点与查询关键点的平均距离（用于Beam Search排序）。
+    """
+    bboxes = flat.bboxes[node_indices]
+    centers = (bboxes[..., :3] + bboxes[..., 3:]) * 0.5
+    diffs = centers - query_vec[np.newaxis, :, :]
+    distances = np.linalg.norm(diffs, axis=2)
+    return distances.mean(axis=1)
+
+
+def _append_flat_frames(flat: FlatOctree,
+                        node_idx: int,
+                        output: list[str],
+                        seen: set[str]) -> None:
+    frames = flat.get_frame_ids(node_idx)
+    for frame_id in frames:
+        if frame_id and frame_id not in seen:
+            output.append(frame_id)
+            seen.add(frame_id)
 
 
 def _load_model_once(model_tree_path: str,

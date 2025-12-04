@@ -6,9 +6,12 @@ from __future__ import annotations
 
 import json
 import pickle
-from typing import Mapping, List, Iterable
+from collections import deque
+from typing import Iterable, List, Mapping, Optional, Sequence
 from pathlib import Path
 import sys
+
+import numpy as np
 
 import config
 from data_structures import (
@@ -21,6 +24,7 @@ from data_structures import (
     compute_combination_index,
 )
 from octree_node import ActionTreeNode
+from flat_octree import FlatOctree
 
 
 def _create_root_bboxes(keypoint_names: Iterable[str]) -> dict[str, BoundingBox]:
@@ -120,7 +124,34 @@ def _restore_parent_links(detached: list[tuple[ActionTreeNode, ActionTreeNode]],
         print(f"    [保存模型] 引用恢复完成，共 {total} 条。")
 
 
-def save_tree(root: ActionTreeNode, path: str, show_progress: bool = True) -> None:
+def save_tree(
+    root: ActionTreeNode,
+    path: str,
+    show_progress: bool = True,
+    *,
+    use_flat: Optional[bool] = None,
+) -> None:
+    """
+    保存八叉树到文件。
+
+    默认根据路径后缀选择格式：.npz -> 扁平化格式，其余 -> 旧pickle格式。
+    """
+    if use_flat is None:
+        use_flat = str(path).lower().endswith(".npz")
+
+    if use_flat:
+        if show_progress:
+            print(f"[保存模型] 扁平化转换并写入 {path} ...")
+        flat = convert_tree_to_flat(root, getattr(root, "keypoint_names", config.OCTREE_KEYPOINT_NAMES))
+        flat.save(path)
+        if show_progress:
+            print(f"[保存模型] 完成，输出文件: {path}")
+        return
+
+    _save_tree_pickle(root, path, show_progress=show_progress)
+
+
+def _save_tree_pickle(root: ActionTreeNode, path: str, show_progress: bool = True) -> None:
     """
     使用pickle保存八叉树到二进制文件。
     
@@ -161,7 +192,30 @@ def _rebuild_parent_links(root: ActionTreeNode, show_progress: bool = False) -> 
         print(f"    [加载模型] 父引用恢复完成，共 {processed} 个节点。")
 
 
-def load_tree(path: str, show_progress: bool = True) -> ActionTreeNode:
+def load_tree(
+    path: str,
+    show_progress: bool = True,
+    *,
+    mmap_mode: Optional[str] = None,
+) -> ActionTreeNode | FlatOctree:
+    """
+    加载八叉树文件。
+
+    如果后缀为 .npz，则返回 FlatOctree；否则返回 ActionTreeNode。
+    """
+    use_flat = str(path).lower().endswith(".npz")
+    if use_flat:
+        if show_progress:
+            print(f"[加载模型] 扁平化格式 -> {path}")
+        flat = FlatOctree.load(path, mmap_mode=mmap_mode)
+        if show_progress:
+            print("[加载模型] 完成。")
+        return flat
+
+    return _load_tree_pickle(path, show_progress=show_progress)
+
+
+def _load_tree_pickle(path: str, show_progress: bool = True) -> ActionTreeNode:
     """
     从pickle文件加载八叉树。
     
@@ -183,6 +237,83 @@ def load_tree(path: str, show_progress: bool = True) -> ActionTreeNode:
     if show_progress:
         print("[加载模型] 完成。")
     return root
+
+
+def convert_tree_to_flat(
+    root: ActionTreeNode,
+    keypoint_names: Optional[Sequence[str]] = None,
+) -> FlatOctree:
+    """
+    将 ActionTreeNode 树转换为扁平化的 FlatOctree 结构。
+    """
+    if keypoint_names is None:
+        keypoint_names = getattr(root, "keypoint_names", config.OCTREE_KEYPOINT_NAMES)
+    keypoint_tuple = tuple(keypoint_names)
+    num_keypoints = len(keypoint_tuple)
+
+    queue: deque[ActionTreeNode] = deque([root])
+    nodes: list[ActionTreeNode] = []
+    node_index: dict[ActionTreeNode, int] = {}
+    num_children_entries = 0
+    num_frame_entries = 0
+    max_frame_id_len = 1
+
+    while queue:
+        node = queue.popleft()
+        idx = len(nodes)
+        nodes.append(node)
+        node_index[node] = idx
+
+        child_items = list(node.iter_children())
+        num_children_entries += len(child_items)
+        for _, child in child_items:
+            queue.append(child)
+
+        num_frame_entries += len(node.frame_ids)
+        for frame_id in node.frame_ids:
+            if frame_id:
+                max_frame_id_len = max(max_frame_id_len, len(frame_id))
+
+    frame_id_dtype = f"U{max(8, max_frame_id_len)}"
+
+    flat = FlatOctree.allocate(
+        keypoint_names=keypoint_tuple,
+        num_nodes=len(nodes),
+        num_children_entries=num_children_entries,
+        num_frame_entries=num_frame_entries,
+        frame_id_dtype=frame_id_dtype,
+    )
+
+    child_offset = 0
+    frame_offset = 0
+
+    for idx, node in enumerate(nodes):
+        parent_idx = -1 if node.parent is None else node_index[node.parent]
+        flat.node_parent_idx[idx] = parent_idx
+        flat.node_depth[idx] = node.depth
+
+        for kp_idx, kp_name in enumerate(keypoint_tuple):
+            bbox = node.bboxes.get(kp_name)
+            if bbox is None:
+                continue
+            flat.bboxes[idx, kp_idx, :3] = bbox.min_point
+            flat.bboxes[idx, kp_idx, 3:] = bbox.max_point
+
+        flat.children_row_ptr[idx] = child_offset
+        for octants, child in node.iter_children():
+            flat.children_octants[child_offset, :] = np.asarray(octants, dtype=np.uint8)
+            flat.children_indices[child_offset] = node_index[child]
+            child_offset += 1
+
+        flat.frame_ids_row_ptr[idx] = frame_offset
+        for frame_id in node.frame_ids:
+            flat.frame_ids_data[frame_offset] = frame_id
+            frame_offset += 1
+
+    flat.children_row_ptr[len(nodes)] = child_offset
+    flat.frame_ids_row_ptr[len(nodes)] = frame_offset
+
+    return flat
 
 
 def save_metadata(metadata_list: List[FrameMetadata], path: str) -> None:

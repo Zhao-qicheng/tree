@@ -95,7 +95,7 @@ def _build_pair_index_path(base: Path) -> Path:
 
 
 def train_model(data_dir: str = "data_train/", 
-                model_tree_path: str = "model.tree",
+                model_tree_path: str = "model.npz",
                 model_metadata_path: str = "model.pkl",
                 verbose: bool = True,
                 num_workers: Optional[int] = None) -> None:
@@ -321,7 +321,7 @@ def main():
     
     parser = argparse.ArgumentParser(description="训练帧检索模型")
     parser.add_argument("--data-dir", default="data_train/", help="数据目录路径")
-    parser.add_argument("--output-tree", default="model.tree", help="输出树文件路径")
+    parser.add_argument("--output-tree", default="model.npz", help="输出树文件路径")
     parser.add_argument("--output-metadata", default="model.pkl", help="输出元数据文件路径")
     parser.add_argument("--quiet", action="store_true", help="静默模式，不打印详细信息")
     parser.add_argument("--workers", type=int, default=None, help="并行加载进程数（默认CPU核心数-1）")

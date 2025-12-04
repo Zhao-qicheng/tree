@@ -68,3 +68,9 @@ model_chest_neck_rot60.tree
 model_head_lShldr_rot60.tree
 model_head_rShldr_rot30.tree
 model_head_rShldr_rot60.tree
+model_abdomen_chest.tree
+model_chest_neck.tree
+model_head_rShldr.tree
+model_head_rShldr.tree
+model_lForeArm_lHand.tree
+model_lCollar_rCollar.tree
