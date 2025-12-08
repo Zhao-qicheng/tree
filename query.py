@@ -18,7 +18,7 @@ import config
 
 
 def query_frame(query_keypoints: dict[str, np.ndarray],
-               model_tree_path: str = "model.tree",
+               model_tree_path: str = "model.npz",
                model_metadata_path: str = "model.pkl",
                top_k: int = None,
                verbose: bool = True) -> List[SimilarityResult]:
@@ -199,7 +199,7 @@ def print_coordinate_comparison(query_keypoints: dict[str, np.ndarray],
 
 def query_from_bvh(bvh_file: str,
                   frame_index: int,
-                  model_tree_path: str = "model.tree",
+                  model_tree_path: str = "model.npz",
                   model_metadata_path: str = "model.pkl",
                   top_k: int = None,
                   verbose: bool = True) -> List[SimilarityResult]:
@@ -234,9 +234,15 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description="帧检索查询")
+<<<<<<< Updated upstream
     parser.add_argument("--bvh-file", required=True, help="BVH文件路径")
     parser.add_argument("--frame-index", type=int, required=True, help="帧索引")
     parser.add_argument("--model-tree", default="model.tree", help="树模型文件路径")
+=======
+    parser.add_argument("--bvh-file", help="BVH文件路径")
+    parser.add_argument("--frame-index", type=int, help="帧索引")
+    parser.add_argument("--model-tree", default="model.npz", help="树模型文件路径")
+>>>>>>> Stashed changes
     parser.add_argument("--model-metadata", default="model.pkl", help="元数据文件路径")
     parser.add_argument("--top-k", type=int, default=None, help=f"返回前K个结果（默认{config.TOP_K}）")
     parser.add_argument("--quiet", action="store_true", help="静默模式")

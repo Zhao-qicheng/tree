@@ -35,6 +35,7 @@ def generate_frame_id(bvh_file: str, frame_index: int) -> str:
     return frame_id
 
 
+<<<<<<< Updated upstream
 def train_model(data_dir: str = "data/", 
                 model_tree_path: str = "model.tree",
                 model_metadata_path: str = "model.pkl",
@@ -52,6 +53,63 @@ def train_model(data_dir: str = "data/",
         print("=" * 80)
         print("开始训练帧检索模型")
         print("=" * 80)
+=======
+def _load_frame_worker(payload: tuple[int, str]) -> dict:
+    frame_index, bvh_file = payload
+    try:
+        keypoints = load_keypoints_from_bvh(frame_index, bvh_file)
+        frame_id = generate_frame_id(bvh_file, frame_index)
+        rounded_keypoints = {
+            name: np.round(pos, config.JSON_FLOAT_PRECISION)
+            for name, pos in keypoints.items()
+        }
+        return {
+            "success": True,
+            "frame_index": frame_index,
+            "bvh_file": bvh_file,
+            "frame_id": frame_id,
+            "keypoints": keypoints,
+            "rounded_keypoints": rounded_keypoints,
+        }
+    except Exception as exc:
+        return {
+            "success": False,
+            "frame_index": frame_index,
+            "bvh_file": bvh_file,
+            "error": str(exc),
+        }
+
+
+def train_single_tree(data_dir: str,
+                      model_tree_path: str,
+                      model_metadata_path: str,
+                      verbose: bool = True,
+                      num_workers: Optional[int] = None) -> None:
+    if num_workers is None:
+        cpu_total = os.cpu_count() or 1
+        num_workers = max(1, cpu_total - 1)
+    elif num_workers <= 0:
+        num_workers = 1
+
+    if verbose:
+        print("=" * 80)
+        print("开始训练帧检索模型（混合旋转单树模式）")
+        print("=" * 80)
+        print(f"并行加载进程数: {num_workers}")
+        
+    # 准备旋转配置
+    rotation_configs = []
+    if config.INCLUDE_ROTATIONS:
+        rotation_configs = create_custom_rotation_configs(config.ROTATION_CONFIGS)
+        if verbose:
+             print(f"包含 {len(rotation_configs)} 组旋转配置")
+    else:
+        # 至少包含一个默认配置（不做旋转）
+        rotation_configs = [RotationConfig(axis='z', angle=0, tree_id=0)]
+        if verbose:
+            print("仅包含原始数据（无旋转增强）")
+
+>>>>>>> Stashed changes
     
     # 1. 扫描所有BVH文件
     if verbose:
@@ -127,6 +185,7 @@ def train_model(data_dir: str = "data/",
                     if verbose and total_frames % 100 == 0:
                         print(f"  已处理 {total_frames} 帧...", end='\r')
                 
+<<<<<<< Updated upstream
                 except Exception as e:
                     error_count += 1
                     if verbose:
@@ -144,10 +203,91 @@ def train_model(data_dir: str = "data/",
         except Exception as e:
             if verbose:
                 print(f"  错误: 无法处理文件 {Path(bvh_file).name}: {e}")
+=======
+                file_start_time = time.time()
+                file_frame_count = 0
+                
+                if executor:
+                    futures = [
+                        executor.submit(_load_frame_worker, (frame_index, bvh_file))
+                        for frame_index in range(frame_count)
+                    ]
+                    results_iter = (future.result() for future in as_completed(futures))
+                else:
+                    results_iter = (_load_frame_worker((frame_index, bvh_file)) for frame_index in range(frame_count))
+
+                for result in results_iter:
+                    if result["success"]:
+                        original_keypoints = result["keypoints"]
+                        base_frame_id = result["frame_id"]
+                        
+                        # 遍历旋转配置并插入
+                        for i, rot_config in enumerate(rotation_configs):
+                            # 应用旋转
+                            keypoints = rot_config.rotate(original_keypoints)
+                            
+                            # 生成唯一的 frame_id (包含旋转信息)
+                            # 如果只有一种配置且是默认的，可以不加后缀，但为了统一建议加上或区分
+                            # 为了保持兼容性，如果是原始数据(i=0通常是0度)，可以用原始ID?
+                            # 但如果有多个0度配置怎么办？
+                            # 简单起见，如果列表长度>1，加后缀。
+                            
+                            if len(rotation_configs) > 1:
+                                frame_id = f"{base_frame_id}_rot{i}"
+                            else:
+                                frame_id = base_frame_id
+                            
+                            # 插入树
+                            insert_frame(root, keypoints, frame_id)
+
+                            # 记录元数据 (存储旋转后的关键点，以便查询时计算距离)
+                            metadata = FrameMetadata(
+                                bvh_file=result["bvh_file"],
+                                frame_index=result["frame_index"],
+                                frame_id=frame_id,
+                                keypoints={
+                                    name: np.round(pos, config.JSON_FLOAT_PRECISION)
+                                    for name, pos in keypoints.items()
+                                },
+                            )
+                            metadata_list.append(metadata)
+
+                        total_frames += 1 # 统计原始帧数
+                        file_frame_count += 1
+
+                        if verbose and total_frames % 100 == 0:
+                            print(f"  已处理 {total_frames} 原始帧...", end='\r')
+                    else:
+                        error_count += 1
+                        if verbose:
+                            print(f"  警告: 无法加载帧 {result['frame_index']}: {result['error']}")
+                
+                file_elapsed = time.time() - file_start_time
+                total_elapsed = time.time() - total_start_time
+                
+                if verbose:
+                    avg = file_elapsed / file_frame_count if file_frame_count else 0
+                    print(f"  ✓ 完成 {Path(bvh_file).name}: {file_frame_count} 帧")
+                    print(f"  文件用时: {file_elapsed:.2f} 秒 (平均: {avg:.4f} 秒/帧)")
+                
+                # 清理当前文件的 BVH 缓存，释放内存
+                clear_specific_file(bvh_file)
+                
+                # 强制垃圾回收
+                gc.collect()
+                
+            except Exception as e:
+                if verbose:
+                    print(f"  错误: 无法处理文件 {Path(bvh_file).name}: {e}")
+    finally:
+        if executor:
+            executor.shutdown(wait=True)
+>>>>>>> Stashed changes
     
     if verbose:
         print(f"\n\n训练完成!")
-        print(f"  成功加载帧数: {total_frames}")
+        print(f"  成功加载原始帧数: {total_frames}")
+        print(f"  总索引条目数: {len(metadata_list)}")
         print(f"  错误帧数: {error_count}")
     
     # 4. 统计树结构信息
@@ -185,6 +325,25 @@ def train_model(data_dir: str = "data/",
         print("=" * 80)
 
 
+<<<<<<< Updated upstream
+=======
+def train_model(data_dir: str = "data_train/", 
+                model_tree_path: str = "model.npz",
+                model_metadata_path: str = "model.pkl",
+                verbose: bool = True,
+                num_workers: Optional[int] = None) -> None:
+    
+    # 强制使用新的单树混合模式
+    train_single_tree(
+        data_dir=data_dir,
+        model_tree_path=model_tree_path,
+        model_metadata_path=model_metadata_path,
+        verbose=verbose,
+        num_workers=num_workers
+    )
+
+
+>>>>>>> Stashed changes
 def count_nodes(node) -> int:
     """递归统计节点数。"""
     count = 1
