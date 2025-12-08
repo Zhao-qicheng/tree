@@ -39,8 +39,8 @@ class FlatOctree:
         self.children_start: Optional[np.ndarray] = None # (N+1,) int32
         
         # 子节点对应的 Octant 组合键
-        # 形状: (TotalChildren,) uint8
-        # 每个元素是一个编码后的 octant 组合 (active pair octants encoded into a byte)
+        # 形状: (TotalChildren, 15) uint8
+        # 每一行是一个长度为 15 的 octant 序列
         self.children_keys: Optional[np.ndarray] = None 
         
         # 子节点在 node 数组中的索引
@@ -108,7 +108,7 @@ class FlatOctree:
         
         Returns:
             (keys, indices)
-            keys: (K,) uint8 array, encoded octant combinations
+            keys: (K, 15) uint8 array, octant combinations
             indices: (K,) int32 array, child node indices
         """
         start = self.children_start[node_idx]

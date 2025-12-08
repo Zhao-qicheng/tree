@@ -1,59 +1,33 @@
 """
-训练脚本：从所有BVH文件加载数据，构建八叉树索引。
+训练脚本：从所有BVH文件加载数据，构建八叉树索引（扁平化优化版）。
 """
 
 from __future__ import annotations
 
 import sys
 import time
+import os
+import gc
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import numpy as np
 
 from data_loader import load_all_bvh_files, get_bvh_frame_count, load_keypoints_from_bvh
+from data_frame import clear_specific_file
 from data_structures import FrameMetadata
 from octree_builder import create_root_node, insert_frame, save_tree, save_metadata
+from rotation_utils import create_custom_rotation_configs, RotationConfig
 import config
 
 
 def generate_frame_id(bvh_file: str, frame_index: int) -> str:
-    """
-    生成帧的唯一标识符。
-    
-    参数:
-        bvh_file: BVH文件路径
-        frame_index: 帧索引
-    
-    返回:
-        格式如 "01_01_frame_0042" 的唯一标识
-    """
-    # 从文件路径提取文件名（不含扩展名）
     filename = Path(bvh_file).stem
-    # 生成唯一ID，帧号补齐为4位
     frame_id = f"{filename}_frame_{frame_index:04d}"
     return frame_id
 
 
-<<<<<<< Updated upstream
-def train_model(data_dir: str = "data/", 
-                model_tree_path: str = "model.tree",
-                model_metadata_path: str = "model.pkl",
-                verbose: bool = True) -> None:
-    """
-    训练帧检索模型。
-    
-    参数:
-        data_dir: 数据目录路径
-        model_tree_path: 八叉树模型保存路径
-        model_metadata_path: 元数据保存路径
-        verbose: 是否打印详细信息
-    """
-    if verbose:
-        print("=" * 80)
-        print("开始训练帧检索模型")
-        print("=" * 80)
-=======
 def _load_frame_worker(payload: tuple[int, str]) -> dict:
     frame_index, bvh_file = payload
     try:
@@ -83,6 +57,7 @@ def _load_frame_worker(payload: tuple[int, str]) -> dict:
 def train_single_tree(data_dir: str,
                       model_tree_path: str,
                       model_metadata_path: str,
+                      rotation_config: Optional[RotationConfig] = None,
                       verbose: bool = True,
                       num_workers: Optional[int] = None) -> None:
     if num_workers is None:
@@ -93,23 +68,12 @@ def train_single_tree(data_dir: str,
 
     if verbose:
         print("=" * 80)
-        print("开始训练帧检索模型（混合旋转单树模式）")
+        if rotation_config:
+            print(f"训练树 {rotation_config.tree_id}: {rotation_config.axis}轴 {rotation_config.angle}°")
+        else:
+            print("开始训练帧检索模型（单树模式 - 扁平化优化）")
         print("=" * 80)
         print(f"并行加载进程数: {num_workers}")
-        
-    # 准备旋转配置
-    rotation_configs = []
-    if config.INCLUDE_ROTATIONS:
-        rotation_configs = create_custom_rotation_configs(config.ROTATION_CONFIGS)
-        if verbose:
-             print(f"包含 {len(rotation_configs)} 组旋转配置")
-    else:
-        # 至少包含一个默认配置（不做旋转）
-        rotation_configs = [RotationConfig(axis='z', angle=0, tree_id=0)]
-        if verbose:
-            print("仅包含原始数据（无旋转增强）")
-
->>>>>>> Stashed changes
     
     # 1. 扫描所有BVH文件
     if verbose:
@@ -117,9 +81,7 @@ def train_single_tree(data_dir: str,
     
     bvh_files = load_all_bvh_files(data_dir)
     if verbose:
-        print(f"找到 {len(bvh_files)} 个BVH文件:")
-        for bvh_file in bvh_files:
-            print(f"  - {Path(bvh_file).name}")
+        print(f"找到 {len(bvh_files)} 个BVH文件")
     
     # 2. 创建八叉树根节点
     if verbose:
@@ -128,8 +90,6 @@ def train_single_tree(data_dir: str,
     root = create_root_node()
     if verbose:
         print(f"根节点创建成功，深度: {root.depth}")
-        print(f"八叉树使用的关键点数量: {len(config.OCTREE_KEYPOINT_NAMES)}")
-        print(f"关键点: {', '.join(config.OCTREE_KEYPOINT_NAMES)}")
     
     # 3. 遍历所有文件和帧，插入到八叉树
     if verbose:
@@ -139,71 +99,19 @@ def train_single_tree(data_dir: str,
     total_frames = 0
     error_count = 0
     
-    # 记录总开始时间
     total_start_time = time.time()
     
-    for bvh_file in bvh_files:
-        try:
-            frame_count = get_bvh_frame_count(bvh_file)
-            if verbose:
-                print(f"\n处理文件: {Path(bvh_file).name} ({frame_count} 帧)")
-            
-            # 记录当前文件开始时间
-            file_start_time = time.time()
-            file_frame_count = 0
-            
-            for frame_index in range(frame_count):
-                try:
-                    # 加载关键点
-                    keypoints = load_keypoints_from_bvh(frame_index, bvh_file)
-                    
-                    # 生成帧ID
-                    frame_id = generate_frame_id(bvh_file, frame_index)
-                    
-                    # 插入到八叉树
-                    leaf_node, combination_indices = insert_frame(root, keypoints, frame_id)
-                    
-                    # 创建元数据
-                    # 将坐标精度设置为6位小数
-                    rounded_keypoints = {
-                        name: np.round(pos, config.JSON_FLOAT_PRECISION)
-                        for name, pos in keypoints.items()
-                    }
-                    
-                    metadata = FrameMetadata(
-                        bvh_file=bvh_file,
-                        frame_index=frame_index,
-                        frame_id=frame_id,
-                        keypoints=rounded_keypoints
-                    )
-                    metadata_list.append(metadata)
-                    
-                    total_frames += 1
-                    file_frame_count += 1
-                    
-                    # 每处理100帧打印一次进度
-                    if verbose and total_frames % 100 == 0:
-                        print(f"  已处理 {total_frames} 帧...", end='\r')
+    executor: ProcessPoolExecutor | None = None
+    if num_workers > 1:
+        executor = ProcessPoolExecutor(max_workers=num_workers)
+
+    try:
+        for bvh_file in bvh_files:
+            try:
+                frame_count = get_bvh_frame_count(bvh_file)
+                if verbose:
+                    print(f"\n处理文件: {Path(bvh_file).name} ({frame_count} 帧)")
                 
-<<<<<<< Updated upstream
-                except Exception as e:
-                    error_count += 1
-                    if verbose:
-                        print(f"  警告: 无法加载帧 {frame_index}: {e}")
-            
-            # 文件处理完成，输出该文件用时和总时长
-            file_elapsed = time.time() - file_start_time
-            total_elapsed = time.time() - total_start_time
-            
-            if verbose:
-                print(f"  ✓ 完成 {Path(bvh_file).name}: {file_frame_count} 帧")
-                print(f"  文件用时: {file_elapsed:.2f} 秒 (平均: {file_elapsed/file_frame_count:.4f} 秒/帧)")
-                print(f"  总时长: {total_elapsed:.2f} 秒")
-        
-        except Exception as e:
-            if verbose:
-                print(f"  错误: 无法处理文件 {Path(bvh_file).name}: {e}")
-=======
                 file_start_time = time.time()
                 file_frame_count = 0
                 
@@ -218,45 +126,30 @@ def train_single_tree(data_dir: str,
 
                 for result in results_iter:
                     if result["success"]:
-                        original_keypoints = result["keypoints"]
-                        base_frame_id = result["frame_id"]
+                        keypoints = result["keypoints"]
+                        frame_id = result["frame_id"]
                         
-                        # 遍历旋转配置并插入
-                        for i, rot_config in enumerate(rotation_configs):
-                            # 应用旋转
-                            keypoints = rot_config.rotate(original_keypoints)
-                            
-                            # 生成唯一的 frame_id (包含旋转信息)
-                            # 如果只有一种配置且是默认的，可以不加后缀，但为了统一建议加上或区分
-                            # 为了保持兼容性，如果是原始数据(i=0通常是0度)，可以用原始ID?
-                            # 但如果有多个0度配置怎么办？
-                            # 简单起见，如果列表长度>1，加后缀。
-                            
-                            if len(rotation_configs) > 1:
-                                frame_id = f"{base_frame_id}_rot{i}"
-                            else:
-                                frame_id = base_frame_id
-                            
-                            # 插入树
-                            insert_frame(root, keypoints, frame_id)
+                        if rotation_config:
+                            keypoints = rotation_config.rotate(keypoints)
 
-                            # 记录元数据 (存储旋转后的关键点，以便查询时计算距离)
-                            metadata = FrameMetadata(
-                                bvh_file=result["bvh_file"],
-                                frame_index=result["frame_index"],
-                                frame_id=frame_id,
-                                keypoints={
-                                    name: np.round(pos, config.JSON_FLOAT_PRECISION)
-                                    for name, pos in keypoints.items()
-                                },
-                            )
-                            metadata_list.append(metadata)
+                        insert_frame(root, keypoints, frame_id)
 
-                        total_frames += 1 # 统计原始帧数
+                        metadata = FrameMetadata(
+                            bvh_file=result["bvh_file"],
+                            frame_index=result["frame_index"],
+                            frame_id=frame_id,
+                            keypoints={
+                                name: np.round(pos, config.JSON_FLOAT_PRECISION)
+                                for name, pos in keypoints.items()
+                            },
+                        )
+                        metadata_list.append(metadata)
+
+                        total_frames += 1
                         file_frame_count += 1
 
                         if verbose and total_frames % 100 == 0:
-                            print(f"  已处理 {total_frames} 原始帧...", end='\r')
+                            print(f"  已处理 {total_frames} 帧...", end='\r')
                     else:
                         error_count += 1
                         if verbose:
@@ -276,18 +169,26 @@ def train_single_tree(data_dir: str,
                 # 强制垃圾回收
                 gc.collect()
                 
+                # 可选：显示内存使用情况
+                if verbose:
+                    try:
+                        import psutil
+                        process = psutil.Process()
+                        mem_mb = process.memory_info().rss / 1024 / 1024
+                        print(f"  [内存] 当前占用: {mem_mb:.1f} MB")
+                    except ImportError:
+                        pass
+        
             except Exception as e:
                 if verbose:
                     print(f"  错误: 无法处理文件 {Path(bvh_file).name}: {e}")
     finally:
         if executor:
             executor.shutdown(wait=True)
->>>>>>> Stashed changes
     
     if verbose:
         print(f"\n\n训练完成!")
-        print(f"  成功加载原始帧数: {total_frames}")
-        print(f"  总索引条目数: {len(metadata_list)}")
+        print(f"  成功加载帧数: {total_frames}")
         print(f"  错误帧数: {error_count}")
     
     # 4. 统计树结构信息
@@ -305,19 +206,23 @@ def train_single_tree(data_dir: str,
     if verbose:
         print("\n步骤5: 保存模型...")
     
-    save_tree(root, model_tree_path)
-    if verbose:
-        print(f"  八叉树已保存到: {model_tree_path}")
-    
+    save_tree(root, model_tree_path, show_progress=verbose)
     save_metadata(metadata_list, model_metadata_path)
+    
     if verbose:
-        print(f"  元数据已保存到: {model_metadata_path}")
-        
-        # 显示文件大小
-        tree_size = Path(model_tree_path).stat().st_size / 1024 / 1024
+        # Check size (append .npz if needed)
+        real_tree_path = model_tree_path
+        if not str(model_tree_path).endswith('.npz'):
+             real_tree_path += '.npz'
+             
+        if Path(real_tree_path).exists():
+            tree_size = Path(real_tree_path).stat().st_size / 1024 / 1024
+            print(f"  八叉树: {real_tree_path} ({tree_size:.2f} MB)")
+        else:
+            print(f"  八叉树: {model_tree_path} (保存成功)")
+            
         metadata_size = Path(model_metadata_path).stat().st_size / 1024 / 1024
-        print(f"  树文件大小: {tree_size:.2f} MB")
-        print(f"  元数据文件大小: {metadata_size:.2f} MB")
+        print(f"  元数据: {model_metadata_path} ({metadata_size:.2f} MB)")
     
     if verbose:
         print("\n" + "=" * 80)
@@ -325,62 +230,106 @@ def train_single_tree(data_dir: str,
         print("=" * 80)
 
 
-<<<<<<< Updated upstream
-=======
 def train_model(data_dir: str = "data_train/", 
                 model_tree_path: str = "model.npz",
                 model_metadata_path: str = "model.pkl",
                 verbose: bool = True,
                 num_workers: Optional[int] = None) -> None:
     
-    # 强制使用新的单树混合模式
-    train_single_tree(
-        data_dir=data_dir,
-        model_tree_path=model_tree_path,
-        model_metadata_path=model_metadata_path,
-        verbose=verbose,
-        num_workers=num_workers
-    )
+    if not config.ENABLE_MULTI_TREE:
+        train_single_tree(
+            data_dir=data_dir,
+            model_tree_path=model_tree_path,
+            model_metadata_path=model_metadata_path,
+            rotation_config=None,
+            verbose=verbose,
+            num_workers=num_workers
+        )
+        return
+    
+    if verbose:
+        print("=" * 80)
+        print(f"多树训练模式 - {len(config.ROTATION_CONFIGS)}棵树")
+        print("=" * 80)
+    
+    rotation_configs = create_custom_rotation_configs(config.ROTATION_CONFIGS)
+    
+    base_tree_path = Path(model_tree_path).stem
+    # Handle .npz extension in stem if present
+    if base_tree_path.endswith('.npz'):
+        base_tree_path = base_tree_path[:-4]
+        
+    base_metadata_path = Path(model_metadata_path).stem
+    output_dir = Path(model_tree_path).parent
+    
+    total_start_time = time.time()
+    
+    for rot_config in rotation_configs:
+        # Ensure we keep .npz extension
+        tree_filename = rot_config.get_model_filename(base_tree_path)
+        if not tree_filename.endswith('.npz'):
+            tree_filename += '.npz'
+            
+        tree_path = str(output_dir / tree_filename)
+        metadata_path = str(output_dir / rot_config.get_metadata_filename(base_metadata_path))
+        
+        train_single_tree(
+            data_dir=data_dir,
+            model_tree_path=tree_path,
+            model_metadata_path=metadata_path,
+            rotation_config=rot_config,
+            verbose=verbose,
+            num_workers=num_workers
+        )
+        
+        if verbose:
+            print()
+    
+    total_elapsed = time.time() - total_start_time
+    
+    if verbose:
+        print("=" * 80)
+        print("所有树训练完成！")
+        print(f"总用时: {total_elapsed:.2f} 秒")
 
 
->>>>>>> Stashed changes
 def count_nodes(node) -> int:
-    """递归统计节点数。"""
+    """递归统计节点数"""
     count = 1
-    for _, child in node.iter_children():
+    for child in node.children.values():
         count += count_nodes(child)
     return count
 
 
 def count_leaf_nodes(node) -> int:
-    """递归统计叶节点数。"""
-    if node.is_leaf():
+    """递归统计叶节点数"""
+    if not node.children:
         return 1
     count = 0
-    for _, child in node.iter_children():
+    for child in node.children.values():
         count += count_leaf_nodes(child)
     return count
 
 
 def get_max_frames_in_leaf(node) -> int:
-    """获取单个叶节点中的最大帧数。"""
-    if node.is_leaf():
+    """获取单个叶节点中的最大帧数"""
+    if not node.children:
         return len(node.frame_ids)
     max_frames = 0
-    for _, child in node.iter_children():
+    for child in node.children.values():
         max_frames = max(max_frames, get_max_frames_in_leaf(child))
     return max_frames
 
 
 def main():
-    """主函数。"""
     import argparse
     
     parser = argparse.ArgumentParser(description="训练帧检索模型")
-    parser.add_argument("--data-dir", default="data/", help="数据目录路径")
-    parser.add_argument("--output-tree", default="model.tree", help="输出树文件路径")
+    parser.add_argument("--data-dir", default="data_train/", help="数据目录路径")
+    parser.add_argument("--output-tree", default="model.npz", help="输出树文件路径")
     parser.add_argument("--output-metadata", default="model.pkl", help="输出元数据文件路径")
-    parser.add_argument("--quiet", action="store_true", help="静默模式，不打印详细信息")
+    parser.add_argument("--quiet", action="store_true", help="静默模式")
+    parser.add_argument("--workers", type=int, default=None, help="并行加载进程数")
     
     args = parser.parse_args()
     
@@ -389,7 +338,8 @@ def main():
             data_dir=args.data_dir,
             model_tree_path=args.output_tree,
             model_metadata_path=args.output_metadata,
-            verbose=not args.quiet
+            verbose=not args.quiet,
+            num_workers=args.workers,
         )
     except Exception as e:
         print(f"\n错误: {e}")

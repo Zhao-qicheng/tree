@@ -33,7 +33,7 @@ class BodyKeypoints:
     关键点坐标集合（相对于 hip 原点）。
 
     所有坐标均为 3D numpy 向量，并确保 hip 恒为 [0, 0, 0]。
-    字段名使用BVH原始关节名称（10个关键关节）。
+    字段名使用BVH原始关节名称（16个关键关节）。
     """
 
     hip: Vector3
@@ -41,10 +41,16 @@ class BodyKeypoints:
     neck: Vector3
     head: Vector3
     lShldr: Vector3
-    rShldr: Vector3
+    lForeArm: Vector3
     lHand: Vector3
+    rShldr: Vector3
+    rForeArm: Vector3
     rHand: Vector3
+    lThigh: Vector3
+    lShin: Vector3
     lFoot: Vector3
+    rThigh: Vector3
+    rShin: Vector3
     rFoot: Vector3
 
     def as_dict(self) -> Dict[str, Vector3]:
