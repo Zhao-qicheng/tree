@@ -452,7 +452,7 @@ def main():
     parser = argparse.ArgumentParser(description="帧检索查询")
     parser.add_argument("--bvh-file", help="BVH文件路径")
     parser.add_argument("--frame-index", type=int, help="帧索引")
-    parser.add_argument("--model-tree", default="model.tree.npz", help="树模型文件路径")
+    parser.add_argument("--model-tree", default="model.npz", help="树模型文件路径")
     parser.add_argument("--model-metadata", default="model.pkl", help="元数据文件路径")
     parser.add_argument("--top-k", type=int, default=None, help=f"返回前K个结果")
     parser.add_argument("--quiet", action="store_true", help="静默模式")

@@ -18,3 +18,4 @@ big_data/
 *.pyc
 __pycache__/
 *.md
+/data
