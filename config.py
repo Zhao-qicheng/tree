@@ -48,8 +48,26 @@ OCTREE_KEYPOINT_NAMES = (
     "rFoot",
 )
 
+# 关节对配置
+# 将关键点按对分组，每组在八叉树的一定深度范围内使用
+JOINT_PAIRS = (
+    ("chest", "neck"),
+    ("head", "lShldr"),
+    ("lForeArm", "lHand"),
+    ("rShldr", "rForeArm"),
+    ("rHand", "lThigh"),
+    ("lShin", "lFoot"),
+    ("rThigh", "rShin"),
+    ("rFoot",),  # 最后一个单独一组
+)
+
+# 每组关节对的迭代深度 n
+# 前 n 层使用第一组，n+1 到 2n 层使用第二组，以此类推
+PAIR_ITERATION_DEPTH: int = 2
+
 # 八叉树相关配置
-MAX_DEPTH: int = 11
+# 动态计算最大深度
+MAX_DEPTH: int = len(JOINT_PAIRS) * PAIR_ITERATION_DEPTH
 
 # 根节点包围盒尺寸参数（单位：文件中的单位，）
 ROOT_BBOX_SIZE: float = 80.0  # 边长
@@ -107,11 +125,11 @@ JOINT_WEIGHTS: Dict[str, float] = {
 # 多树旋转索引配置
 # ============================================================================
 
-# 是否启用多树模式（False则使用传统单树模式）
-ENABLE_MULTI_TREE: bool = True
+# 是否启用多树模式（False则使用传统单树模式，但会在单树中包含旋转后的数据）
+ENABLE_MULTI_TREE: bool = False
 
 # 旋转配置列表：定义每棵树的旋转参数
-# 每个配置包含：axis（旋转轴：'x'/'y'/'z'）和 angle（角度：度）
+# 在单树模式下，这些旋转将作为数据增强应用到同一棵树中
 ROTATION_CONFIGS: list[dict] = [
     {"axis": "z", "angle": 0},    # 树0: 原始坐标系
     {"axis": "z", "angle": 30},   # 树1: Z轴旋转30°

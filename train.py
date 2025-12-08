@@ -93,11 +93,16 @@ def train_single_tree(data_dir: str,
     
     # 3. 遍历所有文件和帧，插入到八叉树
     if verbose:
-        print("\n步骤3: 加载并插入所有帧...")
+        print("\n步骤3: 加载并插入所有帧（包含旋转增强）...")
     
     metadata_list: List[FrameMetadata] = []
     total_frames = 0
     error_count = 0
+    
+    # 准备旋转配置
+    rot_configs = create_custom_rotation_configs(config.ROTATION_CONFIGS)
+    if verbose:
+        print(f"  应用 {len(rot_configs)} 种旋转配置进行数据增强")
     
     total_start_time = time.time()
     
@@ -126,30 +131,43 @@ def train_single_tree(data_dir: str,
 
                 for result in results_iter:
                     if result["success"]:
-                        keypoints = result["keypoints"]
-                        frame_id = result["frame_id"]
+                        base_keypoints = result["keypoints"]
+                        base_frame_id = result["frame_id"]
                         
-                        if rotation_config:
-                            keypoints = rotation_config.rotate(keypoints)
+                        # 遍历所有旋转配置进行增强
+                        for rot_cfg in rot_configs:
+                            # 1. 旋转关键点
+                            # 如果是0度（原始），rotate方法会直接返回副本或原样，效率较高
+                            aug_keypoints = rot_cfg.rotate(base_keypoints)
+                            
+                            # 2. 生成增强后的 Frame ID
+                            # 对于原始角度(0度)，保持原ID，方便辨识
+                            if rot_cfg.angle == 0:
+                                aug_frame_id = base_frame_id
+                            else:
+                                aug_frame_id = f"{base_frame_id}_rot_{rot_cfg.axis}{rot_cfg.angle}"
+                            
+                            # 3. 插入八叉树
+                            insert_frame(root, aug_keypoints, aug_frame_id)
 
-                        insert_frame(root, keypoints, frame_id)
-
-                        metadata = FrameMetadata(
-                            bvh_file=result["bvh_file"],
-                            frame_index=result["frame_index"],
-                            frame_id=frame_id,
-                            keypoints={
-                                name: np.round(pos, config.JSON_FLOAT_PRECISION)
-                                for name, pos in keypoints.items()
-                            },
-                        )
-                        metadata_list.append(metadata)
+                            # 4. 创建元数据
+                            # 注意：这里存储的是旋转后的关键点，以便查询时精确计算距离
+                            metadata = FrameMetadata(
+                                bvh_file=result["bvh_file"],
+                                frame_index=result["frame_index"],
+                                frame_id=aug_frame_id,
+                                keypoints={
+                                    name: np.round(pos, config.JSON_FLOAT_PRECISION)
+                                    for name, pos in aug_keypoints.items()
+                                },
+                            )
+                            metadata_list.append(metadata)
 
                         total_frames += 1
                         file_frame_count += 1
 
                         if verbose and total_frames % 100 == 0:
-                            print(f"  已处理 {total_frames} 帧...", end='\r')
+                            print(f"  已处理 {total_frames} 帧 (x{len(rot_configs)} 增强)...", end='\r')
                     else:
                         error_count += 1
                         if verbose:

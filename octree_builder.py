@@ -22,6 +22,13 @@ import pickle
 # 临时构建节点 (仅用于构建过程)
 # =============================================================================
 
+def _get_active_joint_names(depth: int) -> Tuple[str, ...]:
+    """根据深度获取当前活跃的关节对"""
+    pair_idx = depth // config.PAIR_ITERATION_DEPTH
+    if pair_idx >= len(config.JOINT_PAIRS):
+        return config.JOINT_PAIRS[-1]
+    return config.JOINT_PAIRS[pair_idx]
+
 class _BuilderNode:
     """
     用于构建过程的临时节点类。
@@ -38,9 +45,15 @@ class _BuilderNode:
         if octants in self.children:
             return self.children[octants]
         
+        # 获取当前层级活跃的关节
+        active_names = _get_active_joint_names(self.depth)
+        
         # 创建子节点包围盒
-        child_bboxes = {}
-        for idx, name in enumerate(config.OCTREE_KEYPOINT_NAMES):
+        # 默认继承父节点的所有包围盒
+        child_bboxes = self.bboxes.copy()
+        
+        # 仅细分活跃关节的包围盒
+        for idx, name in enumerate(active_names):
             bbox = self.bboxes[name]
             child_bboxes[name] = bbox.subdivide(octants[idx])
             
@@ -79,10 +92,13 @@ def insert_frame(root: _BuilderNode, keypoints: KeypointInput, frame_id: str) ->
     current.add_frame(frame_id)
     
     for _ in range(config.MAX_DEPTH):
-        # 只为用于八叉树的关键点计算octant
+        # 获取当前活跃关节
+        active_names = _get_active_joint_names(current.depth)
+        
+        # 只为活跃关节计算octant
         octants = tuple(
             compute_octant(keypoint_map[name], current.bboxes[name])
-            for name in config.OCTREE_KEYPOINT_NAMES
+            for name in active_names
         )
         current = current.get_or_create_child(octants)
         current.add_frame(frame_id)
@@ -117,6 +133,9 @@ def build_flat_tree(root: _BuilderNode) -> FlatOctree:
     kp_names = list(config.OCTREE_KEYPOINT_NAMES)
     num_kps = len(kp_names)
     
+    # 计算最大键宽度（最大关节对大小）
+    max_key_width = max(len(pair) for pair in config.JOINT_PAIRS)
+    
     # 2. 初始化数组
     flat = FlatOctree()
     flat.num_nodes = num_nodes
@@ -129,7 +148,7 @@ def build_flat_tree(root: _BuilderNode) -> FlatOctree:
     # Children CSR arrays
     total_children = sum(len(n.children) for n in nodes)
     flat.children_start = np.zeros(num_nodes + 1, dtype=np.int32)
-    flat.children_keys = np.zeros((total_children, num_kps), dtype=np.uint8)
+    flat.children_keys = np.zeros((total_children, max_key_width), dtype=np.uint8)
     flat.children_indices = np.zeros(total_children, dtype=np.int32)
     
     # Frame IDs arrays
@@ -158,7 +177,12 @@ def build_flat_tree(root: _BuilderNode) -> FlatOctree:
         sorted_keys = sorted(node.children.keys())
         for key in sorted_keys:
             child_node = node.children[key]
-            flat.children_keys[child_ptr] = np.array(key, dtype=np.uint8)
+            
+            # Pad key if necessary
+            key_arr = np.zeros(max_key_width, dtype=np.uint8)
+            key_arr[:len(key)] = key
+            
+            flat.children_keys[child_ptr] = key_arr
             flat.children_indices[child_ptr] = node_to_idx[child_node]
             child_ptr += 1
             

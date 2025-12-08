@@ -304,127 +304,32 @@ def query_frame(query_keypoints: dict[str, np.ndarray],
     if top_k is None:
         top_k = config.TOP_K
     
-    if not config.ENABLE_MULTI_TREE:
-        # 单树模式
-        results, candidate_ids, load_elapsed, tree_elapsed, sim_elapsed = query_single_tree(
-            query_keypoints=query_keypoints,
-            model_tree_path=model_tree_path,
-            model_metadata_path=model_metadata_path,
-            rotation_config=None,
-            top_k=top_k,
-            verbose=False,
-            tree_instance=tree_instance,
-            metadata_instance=metadata_instance,
-            use_cache=use_cache,
-            enable_parallel=enable_parallel,
-            parallel_workers=parallel_workers,
-        )
-        
-        if verbose:
-            print("=" * 80)
-            print("帧检索查询系统（单树模式 - 扁平化优化版）")
-            print("=" * 80)
-            print(f"\n查询完成！")
-            print(f"  候选帧数量: {len(candidate_ids)}")
-            print(f"  八叉树查询用时: {tree_elapsed:.4f} 秒")
-            print(f"  精确计算用时: {sim_elapsed:.4f} 秒")
-            print(f"  总查询用时: {tree_elapsed + sim_elapsed:.4f} 秒\n")
-            print(f"Top-{top_k}最相似的帧:")
-            print("-" * 80)
-            for i, result in enumerate(results, 1):
-                print_result(result, i)
-            print("-" * 80)
-        
-        return results
-    
-    # 多树模式
-    num_trees = len(config.ROTATION_CONFIGS)
-    if verbose:
-        print("=" * 80)
-        print(f"帧检索查询系统（多树模式 - {num_trees}棵树 - 扁平化优化版）")
-        print("=" * 80)
-    
-    rotation_configs = create_custom_rotation_configs(config.ROTATION_CONFIGS)
-    base_tree_path = Path(model_tree_path).stem
-    base_metadata_path = Path(model_metadata_path).stem
-    model_dir = Path(model_tree_path).parent
-    
-    # 1. 加载所有树
-    if verbose:
-        print(f"\n步骤1: 加载 {num_trees} 棵树...")
-    
-    trees: Dict[int, FlatOctree] = {}
-    metadata_list: List[FrameMetadata] = None
-    load_start = time.time()
-    
-    for rot_config in rotation_configs:
-        tree_path = str(model_dir / rot_config.get_model_filename(base_tree_path))
-        metadata_path = str(model_dir / rot_config.get_metadata_filename(base_metadata_path))
-        
-        trees[rot_config.tree_id] = load_tree(tree_path, show_progress=False)
-        
-        if metadata_list is None and rot_config.tree_id == 0:
-            metadata_list = load_metadata(metadata_path)
-    
-    load_elapsed = time.time() - load_start
-    if verbose:
-        print(f"  已加载 {num_trees} 棵树，用时: {load_elapsed:.4f} 秒\n")
-    
-    # 2. 查询每棵树
-    if verbose:
-        print(f"步骤2: 从每棵树查找候选帧...")
-    
-    all_candidates: Dict[int, List[str]] = {}
-    query_start = time.time()
-    
-    for rot_config in rotation_configs:
-        rotated_query = rot_config.rotate(query_keypoints)
-        candidates = find_candidate_frames_from_tree(
-            trees[rot_config.tree_id],
-            rotated_query,
-            min_candidates=config.MIN_CANDIDATES
-        )
-        all_candidates[rot_config.tree_id] = candidates
-        if verbose:
-            print(f"  树{rot_config.tree_id}: {len(candidates)} 个候选帧")
-    
-    # 3. 合并候选
-    if verbose:
-        print(f"\n步骤3: 合并候选帧...")
-    
-    merged_candidates = merge_candidates(
-        all_candidates,
-        strategy=config.MERGE_STRATEGY,
-        min_vote_threshold=config.MIN_VOTE_THRESHOLD,
-        verbose=verbose
-    )
-    tree_elapsed = time.time() - query_start
-    
-    if verbose:
-        print(f"  合并后候选帧数: {len(merged_candidates)}")
-        print(f"  八叉树查询用时: {tree_elapsed:.4f} 秒\n")
-    
-    # 4. 精确计算
-    if verbose:
-        print(f"步骤4: 计算精确距离并查找Top-{top_k}...\n")
-    
-    sim_start = time.time()
-    results = find_similar_frames_in_candidates(
-        query_keypoints,
-        metadata_list,
-        merged_candidates,
-        top_k,
+    # 强制单树模式（多树逻辑已移除，支持单树内旋转增强）
+    results, candidate_ids, load_elapsed, tree_elapsed, sim_elapsed = query_single_tree(
+        query_keypoints=query_keypoints,
+        model_tree_path=model_tree_path,
+        model_metadata_path=model_metadata_path,
+        rotation_config=None,
+        top_k=top_k,
+        verbose=False,
+        tree_instance=tree_instance,
+        metadata_instance=metadata_instance,
+        use_cache=use_cache,
         enable_parallel=enable_parallel,
-        max_workers=parallel_workers,
+        parallel_workers=parallel_workers,
     )
-    sim_elapsed = time.time() - sim_start
     
     if verbose:
+        print("=" * 80)
+        print("帧检索查询系统（关节对分组八叉树 + 旋转增强）")
+        print("=" * 80)
+        print(f"\n查询完成！")
+        print(f"  候选帧数量: {len(candidate_ids)}")
+        print(f"  八叉树查询用时: {tree_elapsed:.4f} 秒")
         print(f"  精确计算用时: {sim_elapsed:.4f} 秒")
         print(f"  总查询用时: {tree_elapsed + sim_elapsed:.4f} 秒\n")
-        print("=" * 80)
         print(f"Top-{top_k}最相似的帧:")
-        print("=" * 80)
+        print("-" * 80)
         for i, result in enumerate(results, 1):
             print_result(result, i)
         print("-" * 80)
@@ -547,7 +452,7 @@ def main():
     parser = argparse.ArgumentParser(description="帧检索查询")
     parser.add_argument("--bvh-file", help="BVH文件路径")
     parser.add_argument("--frame-index", type=int, help="帧索引")
-    parser.add_argument("--model-tree", default="model.tree", help="树模型文件路径")
+    parser.add_argument("--model-tree", default="model.tree.npz", help="树模型文件路径")
     parser.add_argument("--model-metadata", default="model.pkl", help="元数据文件路径")
     parser.add_argument("--top-k", type=int, default=None, help=f"返回前K个结果")
     parser.add_argument("--quiet", action="store_true", help="静默模式")
