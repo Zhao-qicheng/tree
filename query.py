@@ -35,13 +35,13 @@ def _compute_node_distances_batch(
     if len(node_indices) == 0:
         return np.array([], dtype=np.float32)
 
-    # 1. Gather bboxes: (K, 15, 6)
+    # 1. 收集包围盒: (K, 15, 6)
     node_bboxes = flat.bboxes[node_indices]
     
-    # 2. Compute centers: (K, 15, 3)
+    # 2. 计算中心点: (K, 15, 3)
     centers = (node_bboxes[..., :3] + node_bboxes[..., 3:]) * 0.5
     
-    # 3. Prepare query vector: (15, 3)
+    # 3. 准备查询向量: (15, 3)
     query_vec = np.zeros((len(flat.keypoint_names), 3), dtype=np.float32)
     valid_mask = np.zeros(len(flat.keypoint_names), dtype=bool)
     
@@ -50,14 +50,14 @@ def _compute_node_distances_batch(
             query_vec[i] = query_keypoints[name]
             valid_mask[i] = True
             
-    # 4. Compute distances
-    # diff: (K, 15, 3)
-    # query_vec needs to be broadcasted
+    # 4. 计算距离
+    # 差值: (K, 15, 3)
+    # query_vec 需要进行广播
     diff = centers - query_vec # (K, 15, 3)
     dist_sq = np.sum(diff**2, axis=2) # (K, 15)
     dist = np.sqrt(dist_sq)
     
-    # Mask out invalid keypoints
+    # 掩盖无效的关键点
     dist = dist * valid_mask # (K, 15)
     
     count = np.sum(valid_mask)
@@ -81,21 +81,21 @@ def find_candidate_frames_from_tree(tree: FlatOctree,
     body = coerce_body_keypoints(query_keypoints)
     keypoint_dict = body.as_dict()
     
-    # Beam Search
+    # 波束搜索 (Beam Search)
     beam_width = max(1, getattr(config, "BEAM_WIDTH", 4))
     
-    # Start with root (index 0)
+    # 从根节点开始 (索引 0)
     current_nodes = np.array([0], dtype=np.int32)
     
-    # Track leaf nodes encountered
+    # 记录遇到的叶子节点
     leaf_nodes = []
     
     for _ in range(config.MAX_DEPTH):
         next_nodes = []
         
-        # Expand all current nodes
-        # Optimization: We can batch get_children if we implemented it, 
-        # but here we loop over beam nodes (usually small, e.g. 100)
+        # 扩展所有当前节点
+        # 优化：如果我们实现了批量 get_children，可以批量处理，
+        # 但这里我们遍历波束节点（通常很小，如 100）
         
         all_children_indices = []
         
@@ -113,20 +113,20 @@ def find_candidate_frames_from_tree(tree: FlatOctree,
             
         all_children_indices = np.array(all_children_indices, dtype=np.int32)
         
-        # Compute scores for all children at once
+        # 一次性计算所有子节点的得分
         scores = _compute_node_distances_batch(tree, all_children_indices, keypoint_dict)
         
-        # Select top-k
+        # 选择 top-k
         if len(all_children_indices) > beam_width:
             top_k_idx = np.argsort(scores)[:beam_width]
             current_nodes = all_children_indices[top_k_idx]
         else:
             current_nodes = all_children_indices
             
-    # Candidates are current_nodes + leaf_nodes
+    # 候选节点是 current_nodes + leaf_nodes
     candidate_node_indices = list(current_nodes) + leaf_nodes
     
-    # Collect frames
+    # 收集帧
     candidate_frame_ids = []
     seen_frames = set()
     visited_nodes = set()
@@ -143,7 +143,7 @@ def find_candidate_frames_from_tree(tree: FlatOctree,
     for idx in candidate_node_indices:
         collect_from_node(idx)
         
-    # Backtracking
+    # 回溯 (Backtracking)
     backtrack_depth = 0
     max_backtrack_depth = getattr(config, "MAX_BACKTRACK_DEPTH", 2)
     
@@ -461,11 +461,11 @@ def main():
     args = parser.parse_args()
     
     try:
-        # Check if model exists (append .npz if needed for check, but load_tree handles it)
-        # Actually load_tree expects the exact path or handles it.
-        # But here we just check existence.
-        # If user passes "model.tree" but we saved as "model.tree.npz", we might need to adjust.
-        # But let's assume user passes correct path or we handle it.
+        # 检查模型是否存在（如果需要检查则附加 .npz，但 load_tree 会处理）
+        # 实际上 load_tree 期望准确路径或自行处理
+        # 但这里我们只是检查是否存在
+        # 如果用户传入 "model.tree" 但我们保存为 "model.tree.npz"，可能需要调整
+        # 但这里假设用户传入正确路径或我们能处理
         
         if args.interactive:
             interactive_mode(

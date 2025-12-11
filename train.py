@@ -228,7 +228,7 @@ def train_single_tree(data_dir: str,
     save_metadata(metadata_list, model_metadata_path)
     
     if verbose:
-        # Check size (append .npz if needed)
+        # 检查大小（如果需要则附加 .npz）
         real_tree_path = model_tree_path
         if not str(model_tree_path).endswith('.npz'):
              real_tree_path += '.npz'
@@ -273,7 +273,7 @@ def train_model(data_dir: str = "data_train/",
     rotation_configs = create_custom_rotation_configs(config.ROTATION_CONFIGS)
     
     base_tree_path = Path(model_tree_path).stem
-    # Handle .npz extension in stem if present
+    # 处理 .npz 扩展名（如果存在）
     if base_tree_path.endswith('.npz'):
         base_tree_path = base_tree_path[:-4]
         
@@ -283,7 +283,7 @@ def train_model(data_dir: str = "data_train/",
     total_start_time = time.time()
     
     for rot_config in rotation_configs:
-        # Ensure we keep .npz extension
+        # 确保保留 .npz 扩展名
         tree_filename = rot_config.get_model_filename(base_tree_path)
         if not tree_filename.endswith('.npz'):
             tree_filename += '.npz'

@@ -145,13 +145,13 @@ def build_flat_tree(root: _BuilderNode) -> FlatOctree:
     flat.node_parent_idx = np.full(num_nodes, -1, dtype=np.int32)
     flat.bboxes = np.zeros((num_nodes, num_kps, 6), dtype=np.float32)
     
-    # Children CSR arrays
+    # 子节点 CSR 数组
     total_children = sum(len(n.children) for n in nodes)
     flat.children_start = np.zeros(num_nodes + 1, dtype=np.int32)
     flat.children_keys = np.zeros((total_children, max_key_width), dtype=np.uint8)
     flat.children_indices = np.zeros(total_children, dtype=np.int32)
     
-    # Frame IDs arrays
+    # 帧ID 数组
     total_frames = sum(len(n.frame_ids) for n in nodes)
     flat.frame_ids_start = np.zeros(num_nodes + 1, dtype=np.int32)
     flat.frame_ids_data = np.empty(total_frames, dtype='U32')
@@ -161,24 +161,24 @@ def build_flat_tree(root: _BuilderNode) -> FlatOctree:
     frame_ptr = 0
     
     for i, node in enumerate(nodes):
-        # Node Info
+        # 节点信息
         flat.node_depth[i] = node.depth
         if node.parent is not None:
             flat.node_parent_idx[i] = node_to_idx[node.parent]
             
-        # Bboxes
+        # 包围盒
         for k, name in enumerate(kp_names):
             bbox = node.bboxes[name]
             flat.bboxes[i, k, 0:3] = bbox.min_point
             flat.bboxes[i, k, 3:6] = bbox.max_point
             
-        # Children
+        # 子节点
         flat.children_start[i] = child_ptr
         sorted_keys = sorted(node.children.keys())
         for key in sorted_keys:
             child_node = node.children[key]
             
-            # Pad key if necessary
+            # 如果需要，填充键
             key_arr = np.zeros(max_key_width, dtype=np.uint8)
             key_arr[:len(key)] = key
             
@@ -186,7 +186,7 @@ def build_flat_tree(root: _BuilderNode) -> FlatOctree:
             flat.children_indices[child_ptr] = node_to_idx[child_node]
             child_ptr += 1
             
-        # Frame IDs
+        # 帧ID
         flat.frame_ids_start[i] = frame_ptr
         for fid in node.frame_ids:
             flat.frame_ids_data[frame_ptr] = fid
