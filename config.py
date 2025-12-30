@@ -63,7 +63,7 @@ JOINT_PAIRS = (
 
 # 每组关节对的迭代深度 n
 # 前 n 层使用第一组，n+1 到 2n 层使用第二组，以此类推
-PAIR_ITERATION_DEPTH: int = 2
+PAIR_ITERATION_DEPTH: int = 11
 
 # 八叉树相关配置
 # 动态计算最大深度
@@ -97,9 +97,9 @@ JSON_INDENT: int = 2
 # 查询配置
 TOP_K: int = 5  # 返回最相似的K个帧
 EXACT_MATCH_EPSILON: float = 1  # 精确匹配的距离阈值
-MIN_CANDIDATES: int = 1000  # 八叉树查询时的最小候选帧数量（约为总数的1%）
-BEAM_WIDTH: int = 100  # 多分枝向下搜索时保留的候选节点数量
-MAX_BACKTRACK_DEPTH: int = 3  # 候选不足时允许回溯的最大层级
+MIN_CANDIDATES: int = 1  # 八叉树查询时的最小候选帧数量（约为总数的1%）
+BEAM_WIDTH: int = 500  # 多分枝向下搜索时保留的候选节点数量500/7096
+MAX_BACKTRACK_DEPTH: int = 4 # 候选不足时允许回溯的最大层级4/11
 
 # 相似度计算权重（可根据关节重要性调整）
 JOINT_WEIGHTS: Dict[str, float] = {
@@ -132,10 +132,10 @@ ENABLE_MULTI_TREE: bool = False
 # 在单树模式下，这些旋转将作为数据增强应用到同一棵树中
 ROTATION_CONFIGS: list[dict] = [
     {"axis": "z", "angle": 0},    # 树0: 原始坐标系
-    {"axis": "z", "angle": 30},   # 树1: Z轴旋转30°
-    {"axis": "z", "angle": 60},   # 树2: Z轴旋转60°
-    {"axis": "y", "angle": 30},   # 树3: Y轴旋转30°（改变重力方向）
-    {"axis": "x", "angle": 30},   # 树4: X轴旋转30°
+    # {"axis": "z", "angle": 30},   # 树1: Z轴旋转30°
+    # {"axis": "z", "angle": 60},   # 树2: Z轴旋转60°
+    # {"axis": "y", "angle": 30},   # 树3: Y轴旋转30°（改变重力方向）
+    # {"axis": "x", "angle": 30},   # 树4: X轴旋转30°
 ]
 
 # 候选集合并策略
