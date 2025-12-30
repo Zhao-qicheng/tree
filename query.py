@@ -12,9 +12,9 @@ from collections import Counter
 
 import numpy as np
 
-from data_loader import load_keypoints_from_bvh
+from data_loader import load_keypoints_from_bvh, get_bvh_frame_count, load_all_bvh_files
 from octree_builder import load_tree, load_metadata
-from similarity import find_similar_frames_in_candidates, SimilarityResult
+from similarity import find_similar_frames_in_candidates, SimilarityResult, find_similar_frames
 from data_structures import coerce_body_keypoints, compute_octant, FrameMetadata, BoundingBox
 from flat_octree import FlatOctree
 from rotation_utils import create_custom_rotation_configs, RotationConfig
@@ -447,6 +447,107 @@ def interactive_mode(model_tree_path: str,
             print(f"查询失败: {exc}")
 
 
+def evaluate_folder_accuracy(folder_path: str,
+                            model_tree_path: str = "model.npz",
+                            model_metadata_path: str = "model.pkl",
+                            use_cache: bool = True):
+    """
+    评估文件夹内所有BVH文件的查询准确率。
+    比较八叉树查询和全量遍历查询的Top-1结果。
+    """
+    # 1. 加载模型
+    print(f"正在加载模型...")
+    tree, metadata_list, _ = _load_model_once(
+        model_tree_path,
+        model_metadata_path,
+        use_cache=use_cache,
+        show_progress=True
+    )
+    
+    # 2. 获取所有BVH文件
+    try:
+        bvh_files = load_all_bvh_files(folder_path)
+    except Exception as e:
+        print(f"错误: 无法加载文件夹 {folder_path} 中的BVH文件: {e}")
+        return
+
+    print(f"找到 {len(bvh_files)} 个BVH文件")
+    
+    total_queries = 0
+    correct_matches = 0
+    
+    start_time = time.time()
+    
+    for bvh_file in bvh_files:
+        try:
+            frame_count = get_bvh_frame_count(bvh_file)
+        except Exception as e:
+            print(f"警告: 无法获取文件 {bvh_file} 的帧数，跳过: {e}")
+            continue
+            
+        print(f"正在处理文件: {Path(bvh_file).name} ({frame_count} 帧)")
+        
+        for i in range(frame_count):
+            try:
+                # 获取当前帧关键点
+                query_kp = load_keypoints_from_bvh(i, bvh_file)
+                
+                # 1. 八叉树查询 (Top-1)
+                octree_res_tuple = query_single_tree(
+                    query_keypoints=query_kp,
+                    model_tree_path=model_tree_path,
+                    model_metadata_path=model_metadata_path,
+                    top_k=1,
+                    verbose=False,
+                    tree_instance=tree,
+                    metadata_instance=metadata_list
+                )
+                results_octree = octree_res_tuple[0]
+                
+                # 2. 全量遍历查询 (Top-1)
+                results_brute = find_similar_frames(
+                    query_kp,
+                    metadata_list,
+                    top_k=1,
+                    enable_parallel=True
+                )
+                
+                if not results_octree or not results_brute:
+                    continue
+                
+                total_queries += 1
+                
+                # 比较 Top-1 的 frame_id
+                octree_top1_id = results_octree[0].frame_metadata.frame_id
+                brute_top1_id = results_brute[0].frame_metadata.frame_id
+                
+                if octree_top1_id == brute_top1_id:
+                    correct_matches += 1
+                
+                # 打印进度
+                if total_queries % 10 == 0:
+                    current_acc = (correct_matches / total_queries) * 100
+                    print(f"\r  进度: {i+1}/{frame_count}, 已查询: {total_queries}, 当前准确率: {current_acc:.2f}%", end="", flush=True)
+            except Exception as e:
+                # 避免频繁打印异常
+                if total_queries % 100 == 0:
+                    print(f"\n警告: 处理帧 {i} 时出错: {e}")
+        print() # 换行
+        
+    end_time = time.time()
+    
+    accuracy = (correct_matches / total_queries) * 100 if total_queries > 0 else 0
+    print("\n" + "="*50)
+    print("评估完成")
+    print(f"总查询帧数: {total_queries}")
+    print(f"Top-1 一致次数: {correct_matches}")
+    print(f"最终准确率: {accuracy:.2f}%")
+    print(f"总耗时: {end_time - start_time:.2f} 秒")
+    if total_queries > 0:
+        print(f"平均每帧查询用时: {(end_time - start_time) / total_queries:.4f} 秒")
+    print("="*50)
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="帧检索查询")
@@ -457,16 +558,20 @@ def main():
     parser.add_argument("--top-k", type=int, default=None, help=f"返回前K个结果")
     parser.add_argument("--quiet", action="store_true", help="静默模式")
     parser.add_argument("--interactive", action="store_true", help="交互式模式")
+    parser.add_argument("--eval-dir", help="评估文件夹路径，遍历其中所有BVH文件并计算准确率")
     
     args = parser.parse_args()
     
     try:
-        # Check if model exists (append .npz if needed for check, but load_tree handles it)
-        # Actually load_tree expects the exact path or handles it.
-        # But here we just check existence.
-        # If user passes "model.tree" but we saved as "model.tree.npz", we might need to adjust.
-        # But let's assume user passes correct path or we handle it.
-        
+        if args.eval_dir:
+            evaluate_folder_accuracy(
+                folder_path=args.eval_dir,
+                model_tree_path=args.model_tree,
+                model_metadata_path=args.model_metadata,
+                use_cache=True
+            )
+            sys.exit(0)
+
         if args.interactive:
             interactive_mode(
                 model_tree_path=args.model_tree,
