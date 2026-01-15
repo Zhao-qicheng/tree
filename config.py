@@ -17,7 +17,7 @@ from typing import Dict, Tuple
 DATA_SOURCE_TYPE: str = "npy"
 
 # FS-Jump3D 数据目录（NPY 格式）
-FS_JUMP3D_DATA_DIR: str = "c:/Users/86158/Desktop/数据集/FS-Jump3D-main/data/npy"
+FS_JUMP3D_DATA_DIR: str = "/home/u2023312269/数据集/FS-Jump3D-main/data/npy"
 
 # 标准骨骼比例（基于数据集平均值，以 Hip->Neck 总长度为 100.0 时的比例）
 # 格式: "parentIdx_childIdx": 比例值
@@ -96,6 +96,8 @@ PAIR_ITERATION_DEPTH: int = 2
 
 # 八叉树相关配置
 # 动态计算最大深度
+MAX_DEPTH: int = len(JOINT_PAIRS) * PAIR_ITERATION_DEPTH
+
 # 根节点包围盒尺寸参数
 # 重定向归一化后，脊柱总长为100.0，整个人体动作范围约在 ±150 左右。
 ROOT_BBOX_SIZE: float = 400.0  # 边长
