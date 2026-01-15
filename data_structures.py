@@ -2,6 +2,7 @@
 基础数据结构与工具函数。
 
 包含关键点表示、包围盒运算、八分体判定等通用逻辑。
+支持 Human3.6M 17关节格式。
 """
 
 from __future__ import annotations
@@ -33,25 +34,26 @@ class BodyKeypoints:
     关键点坐标集合（相对于 hip 原点）。
 
     所有坐标均为 3D numpy 向量，并确保 hip 恒为 [0, 0, 0]。
-    字段名使用BVH原始关节名称（16个关键关节）。
+    使用 Human3.6M 17关节格式。
     """
 
-    hip: Vector3
-    chest: Vector3
-    neck: Vector3
-    head: Vector3
-    lShldr: Vector3
-    lForeArm: Vector3
-    lHand: Vector3
-    rShldr: Vector3
-    rForeArm: Vector3
-    rHand: Vector3
-    lThigh: Vector3
-    lShin: Vector3
-    lFoot: Vector3
-    rThigh: Vector3
-    rShin: Vector3
-    rFoot: Vector3
+    hip: Vector3        # 0 - 髋部（原点）
+    rHip: Vector3       # 1 - 右髋
+    rKnee: Vector3      # 2 - 右膝
+    rAnkle: Vector3     # 3 - 右踝
+    lHip: Vector3       # 4 - 左髋
+    lKnee: Vector3      # 5 - 左膝
+    lAnkle: Vector3     # 6 - 左踝
+    spine: Vector3      # 7 - 脊柱
+    chest: Vector3      # 8 - 胸部
+    neck: Vector3       # 9 - 颈部
+    head: Vector3       # 10 - 头部
+    lShoulder: Vector3  # 11 - 左肩
+    lElbow: Vector3     # 12 - 左肘
+    lWrist: Vector3     # 13 - 左腕
+    rShoulder: Vector3  # 14 - 右肩
+    rElbow: Vector3     # 15 - 右肘
+    rWrist: Vector3     # 16 - 右腕
 
     def as_dict(self) -> Dict[str, Vector3]:
         """以字典形式返回关键点，保持名称顺序与 config.KEYPOINT_NAMES 一致。"""
@@ -73,10 +75,15 @@ class FrameMetadata:
     
     存储帧的完整信息，包括原始文件、帧索引和关键点坐标。
     """
-    bvh_file: str  # BVH文件路径
+    source_file: str  # 源文件路径（BVH 或 NPY）
     frame_index: int  # 帧索引
-    frame_id: str  # 唯一标识，格式如 "01_01_frame_0042"
+    frame_id: str  # 唯一标识
     keypoints: Dict[str, Vector3]  # 关键点坐标（6位小数精度）
+    
+    # 为兼容性保留
+    @property
+    def bvh_file(self) -> str:
+        return self.source_file
     
     def __post_init__(self):
         """确保关键点坐标精度为6位小数。"""
@@ -152,7 +159,7 @@ def normalize_to_hip(raw_keypoints: Mapping[str, Sequence[float]]) -> BodyKeypoi
     Args:
         raw_keypoints: 关键点名称 -> 绝对坐标序列（包含 hip）
     """
-    hip_name = config.KEYPOINT_NAMES[0]  # 第一个关键点应该是 hip
+    hip_name = config.KEYPOINT_NAMES[0]  # 第一个关键点是 hip
     try:
         hip_vector = _ensure_vector(raw_keypoints[hip_name])
     except KeyError as exc:
@@ -163,12 +170,10 @@ def normalize_to_hip(raw_keypoints: Mapping[str, Sequence[float]]) -> BodyKeypoi
         if name not in raw_keypoints:
             raise KeyError(f"缺失关键点 {name}")
         vec = _ensure_vector(raw_keypoints[name]) - hip_vector
-        # 应用精度控制
         normalized[name] = np.round(vec, config.JSON_FLOAT_PRECISION)
 
     normalized[hip_name] = np.zeros(3, dtype=np.float64)
 
-    # 动态创建 BodyKeypoints，使用配置中的关键点名称
     return BodyKeypoints(**{name: normalized[name] for name in config.KEYPOINT_NAMES})
 
 
@@ -191,11 +196,7 @@ def compute_octant(point: Vector3, bbox: BoundingBox) -> int:
 
 def compute_combination_index(octants: MultiPointOctant) -> str:
     """
-    将多个octant值（0-7）直接拼接成固定长度的字符串索引。
-    
-    注意：Hips作为原点不参与八叉树迭代，因此octants数量为6个（排除Hips后的关键点）。
-    例如：(2, 7, 3, 0, 4, 1) → "273041"
-          对应：(LeftHand, RightHand, Neck, LeftFoot, RightFoot, LowerBack)
+    将多个octant值（0-7）直接拼接成字符串索引。
     """
     return ''.join(str(octant) for octant in octants)
 
@@ -203,8 +204,6 @@ def compute_combination_index(octants: MultiPointOctant) -> str:
 def iterate_keypoints(mapping: MutableMapping[str, T]) -> Iterator[Tuple[str, T]]:
     """
     按 KEYPOINT_NAMES 顺序遍历任意关键点映射。
-
-    有助于保持编码一致性。
     """
     for name in config.KEYPOINT_NAMES:
         yield name, mapping[name]
@@ -236,4 +235,3 @@ def coerce_body_keypoints(keypoints: KeypointInput) -> BodyKeypoints:
             converted[name] = _ensure_vector(value)
 
     return normalize_to_hip(converted)
-

@@ -1,5 +1,6 @@
 """
-训练脚本：从所有BVH文件加载数据，构建八叉树索引（扁平化优化版）。
+训练脚本：从数据文件加载数据，构建八叉树索引（扁平化优化版）。
+支持 BVH 和 NPY（Human3.6M）格式。
 """
 
 from __future__ import annotations
@@ -14,21 +15,52 @@ from typing import List, Optional
 
 import numpy as np
 
-from data_loader import load_all_bvh_files, get_bvh_frame_count, load_keypoints_from_bvh
-from data_frame import clear_specific_file
 from data_structures import FrameMetadata
 from octree_builder import create_root_node, insert_frame, save_tree, save_metadata
 from rotation_utils import create_custom_rotation_configs, RotationConfig
 import config
 
 
-def generate_frame_id(bvh_file: str, frame_index: int) -> str:
-    filename = Path(bvh_file).stem
+def generate_frame_id(source_file: str, frame_index: int) -> str:
+    """生成帧 ID"""
+    filename = Path(source_file).stem
     frame_id = f"{filename}_frame_{frame_index:04d}"
     return frame_id
 
 
-def _load_frame_worker(payload: tuple[int, str]) -> dict:
+def _load_frame_worker_npy(payload: tuple[int, str]) -> dict:
+    """NPY 格式帧加载工作函数"""
+    from npy_loader import load_keypoints_from_npy, generate_frame_id_from_npy
+    
+    frame_index, npy_file = payload
+    try:
+        keypoints = load_keypoints_from_npy(frame_index, npy_file)
+        frame_id = generate_frame_id_from_npy(npy_file, frame_index)
+        rounded_keypoints = {
+            name: np.round(pos, config.JSON_FLOAT_PRECISION)
+            for name, pos in keypoints.items()
+        }
+        return {
+            "success": True,
+            "frame_index": frame_index,
+            "source_file": npy_file,
+            "frame_id": frame_id,
+            "keypoints": keypoints,
+            "rounded_keypoints": rounded_keypoints,
+        }
+    except Exception as exc:
+        return {
+            "success": False,
+            "frame_index": frame_index,
+            "source_file": npy_file,
+            "error": str(exc),
+        }
+
+
+def _load_frame_worker_bvh(payload: tuple[int, str]) -> dict:
+    """BVH 格式帧加载工作函数"""
+    from data_loader import load_keypoints_from_bvh
+    
     frame_index, bvh_file = payload
     try:
         keypoints = load_keypoints_from_bvh(frame_index, bvh_file)
@@ -40,7 +72,7 @@ def _load_frame_worker(payload: tuple[int, str]) -> dict:
         return {
             "success": True,
             "frame_index": frame_index,
-            "bvh_file": bvh_file,
+            "source_file": bvh_file,
             "frame_id": frame_id,
             "keypoints": keypoints,
             "rounded_keypoints": rounded_keypoints,
@@ -49,7 +81,7 @@ def _load_frame_worker(payload: tuple[int, str]) -> dict:
         return {
             "success": False,
             "frame_index": frame_index,
-            "bvh_file": bvh_file,
+            "source_file": bvh_file,
             "error": str(exc),
         }
 
@@ -59,7 +91,23 @@ def train_single_tree(data_dir: str,
                       model_metadata_path: str,
                       rotation_config: Optional[RotationConfig] = None,
                       verbose: bool = True,
-                      num_workers: Optional[int] = None) -> None:
+                      num_workers: Optional[int] = None,
+                      data_source_type: str = None) -> None:
+    """
+    训练单棵八叉树。
+    
+    参数:
+        data_dir: 数据目录
+        model_tree_path: 输出树文件路径
+        model_metadata_path: 输出元数据文件路径
+        rotation_config: 旋转配置（可选）
+        verbose: 是否打印详细信息
+        num_workers: 并行进程数
+        data_source_type: 数据源类型 ("bvh" 或 "npy")
+    """
+    if data_source_type is None:
+        data_source_type = config.DATA_SOURCE_TYPE
+        
     if num_workers is None:
         cpu_total = os.cpu_count() or 1
         num_workers = max(1, cpu_total - 1)
@@ -71,19 +119,34 @@ def train_single_tree(data_dir: str,
         if rotation_config:
             print(f"训练树 {rotation_config.tree_id}: {rotation_config.axis}轴 {rotation_config.angle}°")
         else:
-            print("开始训练帧检索模型（单树模式 - 扁平化优化）")
+            print(f"开始训练帧检索模型（{data_source_type.upper()} 格式）")
         print("=" * 80)
         print(f"并行加载进程数: {num_workers}")
     
-    # 1. 扫描所有BVH文件
+    # 1. 根据数据源类型选择加载器
+    if data_source_type == "npy":
+        from npy_loader import load_all_npy_files, get_npy_frame_count, clear_specific_npy_file
+        load_all_files = load_all_npy_files
+        get_frame_count = get_npy_frame_count
+        clear_file_cache = clear_specific_npy_file
+        load_frame_worker = _load_frame_worker_npy
+    else:
+        from data_loader import load_all_bvh_files, get_bvh_frame_count
+        from data_frame import clear_specific_file
+        load_all_files = load_all_bvh_files
+        get_frame_count = get_bvh_frame_count
+        clear_file_cache = clear_specific_file
+        load_frame_worker = _load_frame_worker_bvh
+    
+    # 2. 扫描所有数据文件
     if verbose:
         print(f"\n步骤1: 扫描 {data_dir} 目录...")
     
-    bvh_files = load_all_bvh_files(data_dir)
+    data_files = load_all_files(data_dir)
     if verbose:
-        print(f"找到 {len(bvh_files)} 个BVH文件")
+        print(f"找到 {len(data_files)} 个数据文件")
     
-    # 2. 创建八叉树根节点
+    # 3. 创建八叉树根节点
     if verbose:
         print("\n步骤2: 创建八叉树根节点...")
     
@@ -91,7 +154,7 @@ def train_single_tree(data_dir: str,
     if verbose:
         print(f"根节点创建成功，深度: {root.depth}")
     
-    # 3. 遍历所有文件和帧，插入到八叉树
+    # 4. 遍历所有文件和帧，插入到八叉树
     if verbose:
         print("\n步骤3: 加载并插入所有帧（包含旋转增强）...")
     
@@ -111,23 +174,23 @@ def train_single_tree(data_dir: str,
         executor = ProcessPoolExecutor(max_workers=num_workers)
 
     try:
-        for bvh_file in bvh_files:
+        for data_file in data_files:
             try:
-                frame_count = get_bvh_frame_count(bvh_file)
+                frame_count = get_frame_count(data_file)
                 if verbose:
-                    print(f"\n处理文件: {Path(bvh_file).name} ({frame_count} 帧)")
+                    print(f"\n处理文件: {Path(data_file).name} ({frame_count} 帧)")
                 
                 file_start_time = time.time()
                 file_frame_count = 0
                 
                 if executor:
                     futures = [
-                        executor.submit(_load_frame_worker, (frame_index, bvh_file))
+                        executor.submit(load_frame_worker, (frame_index, data_file))
                         for frame_index in range(frame_count)
                     ]
                     results_iter = (future.result() for future in as_completed(futures))
                 else:
-                    results_iter = (_load_frame_worker((frame_index, bvh_file)) for frame_index in range(frame_count))
+                    results_iter = (load_frame_worker((frame_index, data_file)) for frame_index in range(frame_count))
 
                 for result in results_iter:
                     if result["success"]:
@@ -137,11 +200,9 @@ def train_single_tree(data_dir: str,
                         # 遍历所有旋转配置进行增强
                         for rot_cfg in rot_configs:
                             # 1. 旋转关键点
-                            # 如果是0度（原始），rotate方法会直接返回副本或原样，效率较高
                             aug_keypoints = rot_cfg.rotate(base_keypoints)
                             
                             # 2. 生成增强后的 Frame ID
-                            # 对于原始角度(0度)，保持原ID，方便辨识
                             if rot_cfg.angle == 0:
                                 aug_frame_id = base_frame_id
                             else:
@@ -151,9 +212,8 @@ def train_single_tree(data_dir: str,
                             insert_frame(root, aug_keypoints, aug_frame_id)
 
                             # 4. 创建元数据
-                            # 注意：这里存储的是旋转后的关键点，以便查询时精确计算距离
                             metadata = FrameMetadata(
-                                bvh_file=result["bvh_file"],
+                                source_file=result["source_file"],
                                 frame_index=result["frame_index"],
                                 frame_id=aug_frame_id,
                                 keypoints={
@@ -174,20 +234,17 @@ def train_single_tree(data_dir: str,
                             print(f"  警告: 无法加载帧 {result['frame_index']}: {result['error']}")
                 
                 file_elapsed = time.time() - file_start_time
-                total_elapsed = time.time() - total_start_time
                 
                 if verbose:
                     avg = file_elapsed / file_frame_count if file_frame_count else 0
-                    print(f"  ✓ 完成 {Path(bvh_file).name}: {file_frame_count} 帧")
+                    print(f"  ✓ 完成 {Path(data_file).name}: {file_frame_count} 帧")
                     print(f"  文件用时: {file_elapsed:.2f} 秒 (平均: {avg:.4f} 秒/帧)")
                 
-                # 清理当前文件的 BVH 缓存，释放内存
-                clear_specific_file(bvh_file)
-                
-                # 强制垃圾回收
+                # 清理当前文件缓存，释放内存
+                clear_file_cache(data_file)
                 gc.collect()
                 
-                # 可选：显示内存使用情况
+                # 显示内存使用情况
                 if verbose:
                     try:
                         import psutil
@@ -199,7 +256,7 @@ def train_single_tree(data_dir: str,
         
             except Exception as e:
                 if verbose:
-                    print(f"  错误: 无法处理文件 {Path(bvh_file).name}: {e}")
+                    print(f"  错误: 无法处理文件 {Path(data_file).name}: {e}")
     finally:
         if executor:
             executor.shutdown(wait=True)
@@ -209,7 +266,7 @@ def train_single_tree(data_dir: str,
         print(f"  成功加载帧数: {total_frames}")
         print(f"  错误帧数: {error_count}")
     
-    # 4. 统计树结构信息
+    # 5. 统计树结构信息
     if verbose:
         print("\n步骤4: 统计树结构...")
         node_count = count_nodes(root)
@@ -220,7 +277,7 @@ def train_single_tree(data_dir: str,
         print(f"  叶节点数: {leaf_count}")
         print(f"  单个叶节点最大帧数: {max_frames_in_leaf}")
     
-    # 5. 保存模型
+    # 6. 保存模型
     if verbose:
         print("\n步骤5: 保存模型...")
     
@@ -228,7 +285,6 @@ def train_single_tree(data_dir: str,
     save_metadata(metadata_list, model_metadata_path)
     
     if verbose:
-        # 检查大小（如果需要则附加 .npz）
         real_tree_path = model_tree_path
         if not str(model_tree_path).endswith('.npz'):
              real_tree_path += '.npz'
@@ -248,11 +304,18 @@ def train_single_tree(data_dir: str,
         print("=" * 80)
 
 
-def train_model(data_dir: str = "data_train/", 
+def train_model(data_dir: str = None, 
                 model_tree_path: str = "model.npz",
                 model_metadata_path: str = "model.pkl",
                 verbose: bool = True,
-                num_workers: Optional[int] = None) -> None:
+                num_workers: Optional[int] = None,
+                data_source_type: str = None) -> None:
+    """训练模型主入口"""
+    if data_dir is None:
+        if config.DATA_SOURCE_TYPE == "npy":
+            data_dir = config.FS_JUMP3D_DATA_DIR
+        else:
+            data_dir = "data_train/"
     
     if not config.ENABLE_MULTI_TREE:
         train_single_tree(
@@ -261,7 +324,8 @@ def train_model(data_dir: str = "data_train/",
             model_metadata_path=model_metadata_path,
             rotation_config=None,
             verbose=verbose,
-            num_workers=num_workers
+            num_workers=num_workers,
+            data_source_type=data_source_type
         )
         return
     
@@ -273,7 +337,6 @@ def train_model(data_dir: str = "data_train/",
     rotation_configs = create_custom_rotation_configs(config.ROTATION_CONFIGS)
     
     base_tree_path = Path(model_tree_path).stem
-    # 处理 .npz 扩展名（如果存在）
     if base_tree_path.endswith('.npz'):
         base_tree_path = base_tree_path[:-4]
         
@@ -283,7 +346,6 @@ def train_model(data_dir: str = "data_train/",
     total_start_time = time.time()
     
     for rot_config in rotation_configs:
-        # 确保保留 .npz 扩展名
         tree_filename = rot_config.get_model_filename(base_tree_path)
         if not tree_filename.endswith('.npz'):
             tree_filename += '.npz'
@@ -297,7 +359,8 @@ def train_model(data_dir: str = "data_train/",
             model_metadata_path=metadata_path,
             rotation_config=rot_config,
             verbose=verbose,
-            num_workers=num_workers
+            num_workers=num_workers,
+            data_source_type=data_source_type
         )
         
         if verbose:
@@ -343,11 +406,13 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description="训练帧检索模型")
-    parser.add_argument("--data-dir", default="data_train/", help="数据目录路径")
+    parser.add_argument("--data-dir", default=None, help="数据目录路径")
     parser.add_argument("--output-tree", default="model.npz", help="输出树文件路径")
     parser.add_argument("--output-metadata", default="model.pkl", help="输出元数据文件路径")
     parser.add_argument("--quiet", action="store_true", help="静默模式")
     parser.add_argument("--workers", type=int, default=None, help="并行加载进程数")
+    parser.add_argument("--source-type", choices=["bvh", "npy"], default=None, 
+                        help="数据源类型 (默认使用 config 配置)")
     
     args = parser.parse_args()
     
@@ -358,6 +423,7 @@ def main():
             model_metadata_path=args.output_metadata,
             verbose=not args.quiet,
             num_workers=args.workers,
+            data_source_type=args.source_type,
         )
     except Exception as e:
         print(f"\n错误: {e}")

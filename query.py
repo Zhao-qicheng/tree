@@ -1,5 +1,6 @@
 """
 帧检索查询脚本：加载扁平化模型并执行相似帧查询。
+支持 BVH 和 NPY（Human3.6M）格式。
 """
 
 from __future__ import annotations
@@ -12,7 +13,6 @@ from collections import Counter
 
 import numpy as np
 
-from data_loader import load_keypoints_from_bvh
 from octree_builder import load_tree, load_metadata
 from similarity import find_similar_frames_in_candidates, SimilarityResult
 from data_structures import coerce_body_keypoints, compute_octant, FrameMetadata, BoundingBox
@@ -290,7 +290,7 @@ def query_single_tree(query_keypoints: dict[str, np.ndarray],
 
 
 def query_frame(query_keypoints: dict[str, np.ndarray],
-               model_tree_path: str = "model.tree",
+               model_tree_path: str = "model.npz",
                model_metadata_path: str = "model.pkl",
                top_k: int = None,
                verbose: bool = True,
@@ -339,7 +339,7 @@ def query_frame(query_keypoints: dict[str, np.ndarray],
 
 def print_result(result: SimilarityResult, rank: int) -> None:
     metadata = result.frame_metadata
-    filename = Path(metadata.bvh_file).name
+    filename = Path(metadata.source_file).name
     match_flag = "[精确匹配]" if result.is_exact_match else ""
     print(f"\n排名 {rank}: {match_flag}")
     print(f"  文件名: {filename}")
@@ -351,7 +351,7 @@ def print_result(result: SimilarityResult, rank: int) -> None:
 
 def query_from_bvh(bvh_file: str,
                   frame_index: int,
-                  model_tree_path: str = "model.tree",
+                  model_tree_path: str = "model.npz",
                   model_metadata_path: str = "model.pkl",
                   top_k: int = None,
                   verbose: bool = True,
@@ -361,12 +361,62 @@ def query_from_bvh(bvh_file: str,
                   use_cache: bool = True,
                   enable_parallel: bool = True,
                   parallel_workers: Optional[int] = None) -> List[SimilarityResult]:
+    from data_loader import load_keypoints_from_bvh
+    
     if verbose:
         print(f"\n从BVH文件加载查询帧...")
         print(f"  文件: {bvh_file}")
         print(f"  帧索引: {frame_index}")
     
     keypoints = load_keypoints_from_bvh(frame_index, bvh_file)
+    return query_frame(
+        keypoints,
+        model_tree_path,
+        model_metadata_path,
+        top_k,
+        verbose,
+        tree_instance=tree_instance,
+        metadata_instance=metadata_instance,
+        use_cache=use_cache,
+        enable_parallel=enable_parallel,
+        parallel_workers=parallel_workers,
+    )
+
+
+def query_from_npy(npy_file: str,
+                   frame_index: int,
+                   model_tree_path: str = "model.npz",
+                   model_metadata_path: str = "model.pkl",
+                   top_k: int = None,
+                   verbose: bool = True,
+                   *,
+                   tree_instance: Optional[FlatOctree] = None,
+                   metadata_instance: Optional[List[FrameMetadata]] = None,
+                   use_cache: bool = True,
+                   enable_parallel: bool = True,
+                   parallel_workers: Optional[int] = None) -> List[SimilarityResult]:
+    """
+    从 NPY 文件加载查询帧并执行检索。
+    
+    参数:
+        npy_file: NPY 文件路径
+        frame_index: 帧索引
+        model_tree_path: 模型树文件路径
+        model_metadata_path: 元数据文件路径
+        top_k: 返回前 K 个结果
+        verbose: 是否打印详细信息
+    
+    返回:
+        相似度结果列表
+    """
+    from npy_loader import load_keypoints_from_npy
+    
+    if verbose:
+        print(f"\n从NPY文件加载查询帧...")
+        print(f"  文件: {npy_file}")
+        print(f"  帧索引: {frame_index}")
+    
+    keypoints = load_keypoints_from_npy(frame_index, npy_file)
     return query_frame(
         keypoints,
         model_tree_path,
@@ -432,6 +482,7 @@ def interactive_mode(model_tree_path: str,
             continue
 
         try:
+            from data_loader import load_keypoints_from_bvh
             keypoints = load_keypoints_from_bvh(frame_index, bvh_file)
             query_frame(
                 keypoints,
@@ -451,22 +502,17 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="帧检索查询")
     parser.add_argument("--bvh-file", help="BVH文件路径")
+    parser.add_argument("--npy-file", help="NPY文件路径（Human3.6M格式）")
     parser.add_argument("--frame-index", type=int, help="帧索引")
     parser.add_argument("--model-tree", default="model.npz", help="树模型文件路径")
     parser.add_argument("--model-metadata", default="model.pkl", help="元数据文件路径")
-    parser.add_argument("--top-k", type=int, default=None, help=f"返回前K个结果")
+    parser.add_argument("--top-k", type=int, default=None, help="返回前K个结果")
     parser.add_argument("--quiet", action="store_true", help="静默模式")
     parser.add_argument("--interactive", action="store_true", help="交互式模式")
     
     args = parser.parse_args()
     
     try:
-        # 检查模型是否存在（如果需要检查则附加 .npz，但 load_tree 会处理）
-        # 实际上 load_tree 期望准确路径或自行处理
-        # 但这里我们只是检查是否存在
-        # 如果用户传入 "model.tree" 但我们保存为 "model.tree.npz"，可能需要调整
-        # 但这里假设用户传入正确路径或我们能处理
-        
         if args.interactive:
             interactive_mode(
                 model_tree_path=args.model_tree,
@@ -476,18 +522,37 @@ def main():
             )
             sys.exit(0)
 
-        if not args.bvh_file or args.frame_index is None:
-            print("错误: 非交互模式下必须提供 --bvh-file 与 --frame-index。")
+        # 检查输入文件
+        if args.npy_file:
+            # NPY 模式
+            if args.frame_index is None:
+                print("错误: 必须提供 --frame-index。")
+                sys.exit(1)
+            results = query_from_npy(
+                npy_file=args.npy_file,
+                frame_index=args.frame_index,
+                model_tree_path=args.model_tree,
+                model_metadata_path=args.model_metadata,
+                top_k=args.top_k,
+                verbose=not args.quiet
+            )
+        elif args.bvh_file:
+            # BVH 模式
+            if args.frame_index is None:
+                print("错误: 必须提供 --frame-index。")
+                sys.exit(1)
+            results = query_from_bvh(
+                bvh_file=args.bvh_file,
+                frame_index=args.frame_index,
+                model_tree_path=args.model_tree,
+                model_metadata_path=args.model_metadata,
+                top_k=args.top_k,
+                verbose=not args.quiet
+            )
+        else:
+            print("错误: 必须提供 --bvh-file 或 --npy-file。")
             sys.exit(1)
             
-        results = query_from_bvh(
-            bvh_file=args.bvh_file,
-            frame_index=args.frame_index,
-            model_tree_path=args.model_tree,
-            model_metadata_path=args.model_metadata,
-            top_k=args.top_k,
-            verbose=not args.quiet
-        )
         sys.exit(0)
         
     except Exception as e:
@@ -495,6 +560,7 @@ def main():
         import traceback
         traceback.print_exc()
         sys.exit(2)
+
 
 if __name__ == "__main__":
     main()
