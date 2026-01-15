@@ -19,8 +19,18 @@ DATA_SOURCE_TYPE: str = "npy"
 # FS-Jump3D 数据目录（NPY 格式）
 FS_JUMP3D_DATA_DIR: str = "c:/Users/86158/Desktop/数据集/FS-Jump3D-main/data/npy"
 
-# 骨骼归一化参考长度（归一化后的目标躯干长度）
-NORMALIZE_REFERENCE_LENGTH: float = 50.0
+# 标准骨骼比例（基于数据集平均值，以 Hip->Neck 总长度为 100.0 时的比例）
+# 格式: "parentIdx_childIdx": 比例值
+STANDARD_BONE_RATIOS: Dict[str, float] = {
+    '0_7': 0.4380, '7_8': 0.3804, '8_9': 0.1816, '9_10': 0.2238,
+    '8_11': 0.2817, '11_12': 0.4463, '12_13': 0.4279,
+    '8_14': 0.2866, '14_15': 0.4498, '15_16': 0.4589,
+    '0_4': 0.1634, '4_5': 0.7955, '5_6': 0.7563,
+    '0_1': 0.1634, '1_2': 0.8356, '2_3': 0.7395,
+}
+
+# 归一化参考基准长度（将 Hip->Neck 总长度设定为此值）
+NORMALIZE_REFERENCE_LENGTH: float = 100.0
 
 # ============================================================================
 # Human3.6M 17关节配置
@@ -86,11 +96,9 @@ PAIR_ITERATION_DEPTH: int = 2
 
 # 八叉树相关配置
 # 动态计算最大深度
-MAX_DEPTH: int = len(JOINT_PAIRS) * PAIR_ITERATION_DEPTH
-
 # 根节点包围盒尺寸参数
-# 归一化后的数据范围约为 ±100
-ROOT_BBOX_SIZE: float = 200.0  # 边长
+# 重定向归一化后，脊柱总长为100.0，整个人体动作范围约在 ±150 左右。
+ROOT_BBOX_SIZE: float = 400.0  # 边长
 ROOT_BBOX_HALF_SIZE: float = ROOT_BBOX_SIZE / 2.0
 
 # 每个关键点在根节点的初始包围盒范围（min, max）
@@ -120,24 +128,25 @@ BEAM_WIDTH: int = 10  # 多分枝向下搜索时保留的候选节点数量
 MAX_BACKTRACK_DEPTH: int = 11  # 候选不足时允许回溯的最大层级
 
 # 相似度计算权重（Human3.6M 17关节）
+# 提高手、脚、膝盖等关键末梢的权重，以捕捉动作细节
 JOINT_WEIGHTS: Dict[str, float] = {
     "hip": 1.0,
     "rHip": 1.0,
-    "rKnee": 1.1,       # 膝盖对步态重要
-    "rAnkle": 1.2,      # 脚踝动作更重要
+    "rKnee": 1.1,
+    "rAnkle": 1.3,
     "lHip": 1.0,
     "lKnee": 1.1,
-    "lAnkle": 1.2,
-    "spine": 0.9,
-    "chest": 1.0,
+    "lAnkle": 1.3,
+    "spine": 0.8,
+    "chest": 0.9,
     "neck": 0.8,
-    "head": 0.6,
-    "lShoulder": 0.8,
-    "lElbow": 1.0,
-    "lWrist": 1.2,      # 手腕动作更重要
-    "rShoulder": 0.8,
-    "rElbow": 1.0,
-    "rWrist": 1.2,
+    "head": 0.7,
+    "lShoulder": 0.9,
+    "lElbow": 1.1,
+    "lWrist": 1.3,
+    "rShoulder": 0.9,
+    "rElbow": 1.1,
+    "rWrist": 1.3,
 }
 
 # ============================================================================

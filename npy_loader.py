@@ -83,6 +83,17 @@ def clear_specific_npy_file(npy_file: str):
         del _npy_cache[npy_file]
 
 
+# Human3.6M 骨骼连接关系（父节点 -> 子节点）
+# 用于逐肢体归一化
+H36M_BONE_PAIRS = [
+    (0, 7), (7, 8), (8, 9), (9, 10),  # 躯干: Hip -> Spine -> Chest -> Neck -> Head
+    (8, 11), (11, 12), (12, 13),      # 左臂: Chest -> LShoulder -> LElbow -> LWrist
+    (8, 14), (14, 15), (15, 16),      # 右臂: Chest -> RShoulder -> RElbow -> RWrist
+    (0, 4), (4, 5), (5, 6),           # 左腿: Hip -> LHip -> LKnee -> LAnkle
+    (0, 1), (1, 2), (2, 3),           # 右腿: Hip -> RHip -> RKnee -> RAnkle
+]
+
+
 def align_orientation(frame: np.ndarray) -> np.ndarray:
     """
     朝向对齐：将骨盆向量旋转至 X 轴，使人体面朝 Y 轴正方向。
@@ -130,35 +141,48 @@ def align_orientation(frame: np.ndarray) -> np.ndarray:
     return aligned
 
 
-def normalize_skeleton(frame: np.ndarray, 
-                       reference_length: float = None) -> np.ndarray:
+def normalize_skeleton(frame: np.ndarray) -> np.ndarray:
     """
-    骨骼长度归一化：基于躯干长度缩放到统一尺度。
+    标准模板重定向归一化 (Standard Skeleton Retargeting)：
+    保持每个关节的方向向量（动作姿态）不变，但将骨骼长度替换为数据集的平均比例。
+    
+    优点：
+    1. 完全消除了不同运动员的肢体比例差异（长腿、短臂等体型差）。
+    2. 保留了动作的原始形态（角度信息）。
+    3. 避免了“每段骨骼设为1.0”导致的视觉畸变，骨架看起来符合人体比例。
     
     参数:
-        frame: 形状为 (17, 3) 的单帧数据（已对齐）
-        reference_length: 目标躯干长度（默认使用 config 配置）
+        frame: 形状为 (17, 3) 的单帧数据（已中心化，Hip在原点）
     
     返回:
-        归一化后的帧数据
+        重定向归一化后的帧数据，尺度基于 config.NORMALIZE_REFERENCE_LENGTH
     """
-    if reference_length is None:
-        reference_length = getattr(config, 'NORMALIZE_REFERENCE_LENGTH', 50.0)
+    base_len = getattr(config, 'NORMALIZE_REFERENCE_LENGTH', 100.0)
+    ratios = getattr(config, 'STANDARD_BONE_RATIOS', {})
     
-    # 计算当前躯干长度：Hip(0) -> Chest(8) 的距离
-    hip = frame[0]
-    chest = frame[8]
-    trunk_length = np.linalg.norm(chest - hip)
+    new_frame = np.zeros_like(frame)
+    # Hip (索引0) 分支起点
+    new_frame[0] = [0, 0, 0]
     
-    if trunk_length < 1e-6:
-        return frame  # 避免除零
-    
-    # 计算缩放因子
-    scale = reference_length / trunk_length
-    
-    # 缩放所有关节（Hip 在原点，缩放后保持原点）
-    normalized = frame * scale
-    return normalized
+    # 获取骨骼连接对（父节点 -> 子节点）
+    for parent_idx, child_idx in H36M_BONE_PAIRS:
+        # 1. 获取该骨段的原始方向向量
+        direction = frame[child_idx] - frame[parent_idx]
+        norm = np.linalg.norm(direction)
+        
+        if norm < 1e-6:
+            new_frame[child_idx] = new_frame[parent_idx]
+        else:
+            # 2. 获取该骨段的标准长度
+            key = f"{parent_idx}_{child_idx}"
+            std_ratio = ratios.get(key, 1.0)
+            std_length = std_ratio * base_len
+            
+            # 3. 在新骨架上重建节点坐标：父节点位置 + (单位方向向量 * 标准长度)
+            unit_vector = direction / norm
+            new_frame[child_idx] = new_frame[parent_idx] + unit_vector * std_length
+            
+    return new_frame
 
 
 def load_keypoints_from_npy(frame_index: int, 
