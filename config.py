@@ -100,7 +100,7 @@ MAX_DEPTH: int = len(JOINT_PAIRS) * PAIR_ITERATION_DEPTH
 
 # 根节点包围盒尺寸参数
 # 重定向归一化后，脊柱总长为100.0，整个人体动作范围约在 ±150 左右。
-ROOT_BBOX_SIZE: float = 400.0  # 边长
+ROOT_BBOX_SIZE: float = 200.0  # 边长
 ROOT_BBOX_HALF_SIZE: float = ROOT_BBOX_SIZE / 2.0
 
 # 每个关键点在根节点的初始包围盒范围（min, max）
@@ -126,7 +126,7 @@ JSON_INDENT: int = 2
 TOP_K: int = 5  # 返回最相似的K个帧
 EXACT_MATCH_EPSILON: float = 1  # 精确匹配的距离阈值
 MIN_CANDIDATES: int = 1000  # 八叉树查询时的最小候选帧数量
-BEAM_WIDTH: int = 10  # 多分枝向下搜索时保留的候选节点数量
+BEAM_WIDTH: int = 1000  # 多分枝向下搜索时保留的候选节点数量
 MAX_BACKTRACK_DEPTH: int = 11  # 候选不足时允许回溯的最大层级
 
 # 相似度计算权重（Human3.6M 17关节）
@@ -134,21 +134,21 @@ MAX_BACKTRACK_DEPTH: int = 11  # 候选不足时允许回溯的最大层级
 JOINT_WEIGHTS: Dict[str, float] = {
     "hip": 1.0,
     "rHip": 1.0,
-    "rKnee": 1.1,
-    "rAnkle": 1.3,
+    "rKnee": 1.0,
+    "rAnkle": 1.0,
     "lHip": 1.0,
-    "lKnee": 1.1,
-    "lAnkle": 1.3,
-    "spine": 0.8,
-    "chest": 0.9,
-    "neck": 0.8,
-    "head": 0.7,
-    "lShoulder": 0.9,
-    "lElbow": 1.1,
-    "lWrist": 1.3,
-    "rShoulder": 0.9,
-    "rElbow": 1.1,
-    "rWrist": 1.3,
+    "lKnee": 1.0,
+    "lAnkle": 1.0,
+    "spine": 1.0,
+    "chest": 1.0,
+    "neck": 1.0,
+    "head": 1.0,
+    "lShoulder": 1.0,
+    "lElbow": 1.0,
+    "lWrist": 1.0,
+    "rShoulder": 1.0,
+    "rElbow": 1.0,
+    "rWrist": 1.0,
 }
 
 # ============================================================================
