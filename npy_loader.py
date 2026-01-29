@@ -188,7 +188,7 @@ def normalize_skeleton(frame: np.ndarray) -> np.ndarray:
 def load_keypoints_from_npy(frame_index: int, 
                             npy_file: str,
                             align: bool = True,
-                            normalize: bool = True) -> Dict[str, np.ndarray]:
+                            normalize: bool = False) -> Dict[str, np.ndarray]:
     """
     从 NPY 文件加载指定帧的关键点。
     
