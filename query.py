@@ -337,6 +337,111 @@ def query_frame(query_keypoints: dict[str, np.ndarray],
     return results
 
 
+def find_frames_in_same_node(query_keypoints: dict[str, np.ndarray],
+                             model_tree_path: str = "model.npz",
+                             model_metadata_path: str = "model.pkl",
+                             verbose: bool = True,
+                             *,
+                             tree_instance: Optional[FlatOctree] = None,
+                             metadata_instance: Optional[List[FrameMetadata]] = None,
+                             use_cache: bool = True) -> List[str]:
+    """
+    找到与查询帧处于同一个八叉树叶子节点的所有帧。
+    """
+    # 1. 加载模型
+    if tree_instance is not None:
+        tree = tree_instance
+    else:
+        tree, _, _ = _load_model_once(model_tree_path, model_metadata_path, use_cache=use_cache, show_progress=False)
+    
+    # 2. 标准化查询关键点
+    body = coerce_body_keypoints(query_keypoints)
+    keypoint_map = body.as_dict()
+
+    # 3. 沿着树向下走到底
+    current_node = 0  # 从根节点开始
+    for depth in range(config.MAX_DEPTH):
+        # 获取当前层级的活跃关节对
+        from octree_builder import _get_active_joint_names
+        active_names = _get_active_joint_names(depth)
+        
+        # 计算当前层的 octants
+        octants = tuple(
+            compute_octant(keypoint_map[name], BoundingBox.from_tuple(
+                (tuple(tree.bboxes[current_node, tree.keypoint_names.index(name), 0:3]),
+                 tuple(tree.bboxes[current_node, tree.keypoint_names.index(name), 3:6]))
+            ))
+            for name in active_names
+        )
+        
+        # 寻找匹配的子节点
+        keys, indices = tree.get_children(current_node)
+        found_next = False
+        for i, key in enumerate(keys):
+            if tuple(key[:len(octants)]) == octants:
+                current_node = indices[i]
+                found_next = True
+                break
+        
+        if not found_next:
+            if verbose:
+                print(f"警告: 在深度 {depth} 处未找到匹配的子节点，返回当前节点的结果。")
+            break
+            
+    # 4. 获取该节点的所有帧
+    frame_ids = list(tree.get_frame_ids(current_node))
+    
+    if verbose:
+        print(f"\n同节点查询完成！")
+        print(f"  叶子节点索引: {current_node}")
+        print(f"  同节点帧数量: {len(frame_ids)}")
+        print(f"  帧ID列表: {frame_ids[:10]}{'...' if len(frame_ids) > 10 else ''}")
+        
+    return frame_ids
+
+
+def query_same_node_frames_from_npy(npy_file: str,
+                                   frame_index: int,
+                                   model_tree_path: str = "model.npz",
+                                   model_metadata_path: str = "model.pkl",
+                                   verbose: bool = True,
+                                   *,
+                                   tree_instance: Optional[FlatOctree] = None,
+                                   use_cache: bool = True) -> List[str]:
+    """从 NPY 文件加载查询帧并查找同节点帧"""
+    from npy_loader import load_keypoints_from_npy
+    keypoints = load_keypoints_from_npy(frame_index, npy_file)
+    return find_frames_in_same_node(
+        keypoints,
+        model_tree_path,
+        model_metadata_path,
+        verbose,
+        tree_instance=tree_instance,
+        use_cache=use_cache
+    )
+
+
+def query_same_node_frames_from_bvh(bvh_file: str,
+                                   frame_index: int,
+                                   model_tree_path: str = "model.npz",
+                                   model_metadata_path: str = "model.pkl",
+                                   verbose: bool = True,
+                                   *,
+                                   tree_instance: Optional[FlatOctree] = None,
+                                   use_cache: bool = True) -> List[str]:
+    """从 BVH 文件加载查询帧并查找同节点帧"""
+    from data_loader import load_keypoints_from_bvh
+    keypoints = load_keypoints_from_bvh(frame_index, bvh_file)
+    return find_frames_in_same_node(
+        keypoints,
+        model_tree_path,
+        model_metadata_path,
+        verbose,
+        tree_instance=tree_instance,
+        use_cache=use_cache
+    )
+
+
 def print_result(result: SimilarityResult, rank: int) -> None:
     metadata = result.frame_metadata
     filename = Path(metadata.source_file).name
@@ -509,6 +614,7 @@ def main():
     parser.add_argument("--top-k", type=int, default=None, help="返回前K个结果")
     parser.add_argument("--quiet", action="store_true", help="静默模式")
     parser.add_argument("--interactive", action="store_true", help="交互式模式")
+    parser.add_argument("--same-node", action="store_true", help="执行同节点查询（输出该帧所在节点下的所有帧）")
     
     args = parser.parse_args()
     
@@ -528,27 +634,47 @@ def main():
             if args.frame_index is None:
                 print("错误: 必须提供 --frame-index。")
                 sys.exit(1)
-            results = query_from_npy(
-                npy_file=args.npy_file,
-                frame_index=args.frame_index,
-                model_tree_path=args.model_tree,
-                model_metadata_path=args.model_metadata,
-                top_k=args.top_k,
-                verbose=not args.quiet
-            )
+            
+            if args.same_node:
+                results = query_same_node_frames_from_npy(
+                    npy_file=args.npy_file,
+                    frame_index=args.frame_index,
+                    model_tree_path=args.model_tree,
+                    model_metadata_path=args.model_metadata,
+                    verbose=not args.quiet
+                )
+            else:
+                results = query_from_npy(
+                    npy_file=args.npy_file,
+                    frame_index=args.frame_index,
+                    model_tree_path=args.model_tree,
+                    model_metadata_path=args.model_metadata,
+                    top_k=args.top_k,
+                    verbose=not args.quiet
+                )
         elif args.bvh_file:
             # BVH 模式
             if args.frame_index is None:
                 print("错误: 必须提供 --frame-index。")
                 sys.exit(1)
-            results = query_from_bvh(
-                bvh_file=args.bvh_file,
-                frame_index=args.frame_index,
-                model_tree_path=args.model_tree,
-                model_metadata_path=args.model_metadata,
-                top_k=args.top_k,
-                verbose=not args.quiet
-            )
+            
+            if args.same_node:
+                results = query_same_node_frames_from_bvh(
+                    bvh_file=args.bvh_file,
+                    frame_index=args.frame_index,
+                    model_tree_path=args.model_tree,
+                    model_metadata_path=args.model_metadata,
+                    verbose=not args.quiet
+                )
+            else:
+                results = query_from_bvh(
+                    bvh_file=args.bvh_file,
+                    frame_index=args.frame_index,
+                    model_tree_path=args.model_tree,
+                    model_metadata_path=args.model_metadata,
+                    top_k=args.top_k,
+                    verbose=not args.quiet
+                )
         else:
             print("错误: 必须提供 --bvh-file 或 --npy-file。")
             sys.exit(1)

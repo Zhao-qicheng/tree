@@ -140,7 +140,7 @@ def train_single_tree(data_dir: str,
     
     # 2. 扫描所有数据文件
     if verbose:
-        print(f"\n步骤1: 扫描 {data_dir} 目录...")
+        print(f"\n步骤1: 扫描 {data_dir} ...")
     
     data_files = load_all_files(data_dir)
     if verbose:

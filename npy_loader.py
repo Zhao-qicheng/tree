@@ -230,19 +230,26 @@ def load_keypoints_from_npy(frame_index: int,
 
 def load_all_npy_files(data_dir: str) -> List[str]:
     """
-    递归扫描目录下所有 .npy 文件。
+    扫描目录下所有 .npy 文件，也支持扫描单个文件。
     
     参数:
-        data_dir: 数据目录路径
+        data_dir: 数据目录或单个文件路径
     
     返回:
         NPY 文件路径列表
     """
     data_path = Path(data_dir)
     if not data_path.exists():
-        raise FileNotFoundError(f"数据目录 {data_dir} 不存在")
+        raise FileNotFoundError(f"路径 {data_dir} 不存在")
     
-    # 递归搜索
+    # 如果是单个文件
+    if data_path.is_file():
+        if data_path.suffix.lower() == ".npy":
+            return [str(data_path)]
+        else:
+            raise ValueError(f"文件 {data_dir} 不是 .npy 文件")
+    
+    # 递归搜索目录
     npy_files = sorted(glob.glob(str(data_path / "**/*.npy"), recursive=True))
     
     if not npy_files:
