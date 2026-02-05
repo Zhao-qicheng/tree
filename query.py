@@ -16,9 +16,9 @@ import numpy as np
 from octree_builder import load_tree, load_metadata
 from similarity import find_similar_frames_in_candidates, SimilarityResult
 from data_structures import coerce_body_keypoints, compute_octant, FrameMetadata, BoundingBox
-from flat_octree import FlatOctree
-from rotation_utils import create_custom_rotation_configs, RotationConfig
 import config
+import json
+import os
 
 
 _MODEL_CACHE: dict[Tuple[str, str], Tuple[FlatOctree, List[FrameMetadata]]] = {}
@@ -289,6 +289,55 @@ def query_single_tree(query_keypoints: dict[str, np.ndarray],
     return results, candidate_frame_ids, load_elapsed, tree_search_elapsed, similarity_elapsed
 
 
+def _load_leaf_labels(label_path: str = "leaf_labels.json") -> dict:
+    """加载叶节点动作标签"""
+    if os.path.exists(label_path):
+        try:
+            with open(label_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+
+def get_node_index_for_query(tree: FlatOctree, query_keypoints: dict[str, np.ndarray]) -> int:
+    """
+    找到查询帧落入的八叉树节点索引（尽可能深入）。
+    """
+    body = coerce_body_keypoints(query_keypoints)
+    keypoint_map = body.as_dict()
+
+    current_node = 0  # 从根节点开始
+    for depth in range(config.MAX_DEPTH):
+        from octree_builder import _get_active_joint_names
+        active_names = _get_active_joint_names(depth)
+        
+        # 寻找匹配的子节点
+        # 注意：这里需要计算 octants，但扁平化树没有直接存储 bbox 对象，
+        # 我们需要根据树中的数据动态创建 BoundingBox
+        
+        octants = tuple(
+            compute_octant(keypoint_map[name], BoundingBox.from_tuple(
+                (tuple(tree.bboxes[current_node, tree.keypoint_names.index(name), 0:3]),
+                 tuple(tree.bboxes[current_node, tree.keypoint_names.index(name), 3:6]))
+            ))
+            for name in active_names
+        )
+        
+        keys, indices = tree.get_children(current_node)
+        found_next = False
+        for i, key in enumerate(keys):
+            if tuple(key[:len(octants)]) == octants:
+                current_node = indices[i]
+                found_next = True
+                break
+        
+        if not found_next:
+            break
+    
+    return current_node
+
+
 def query_frame(query_keypoints: dict[str, np.ndarray],
                model_tree_path: str = "model.npz",
                model_metadata_path: str = "model.pkl",
@@ -304,7 +353,19 @@ def query_frame(query_keypoints: dict[str, np.ndarray],
     if top_k is None:
         top_k = config.TOP_K
     
-    # 强制单树模式（多树逻辑已移除，支持单树内旋转增强）
+    # 0. 加载模型（如果没传实例）
+    if tree_instance is None:
+        tree, metadata_list, _ = _load_model_once(model_tree_path, model_metadata_path, use_cache=use_cache, show_progress=False)
+    else:
+        tree = tree_instance
+        metadata_list = metadata_instance
+
+    # 1. 查找查询帧所属节点并获取标签
+    leaf_idx = get_node_index_for_query(tree, query_keypoints)
+    labels = _load_leaf_labels()
+    action_name = labels.get(str(leaf_idx))
+
+    # 2. 执行检索
     results, candidate_ids, load_elapsed, tree_elapsed, sim_elapsed = query_single_tree(
         query_keypoints=query_keypoints,
         model_tree_path=model_tree_path,
@@ -312,8 +373,8 @@ def query_frame(query_keypoints: dict[str, np.ndarray],
         rotation_config=None,
         top_k=top_k,
         verbose=False,
-        tree_instance=tree_instance,
-        metadata_instance=metadata_instance,
+        tree_instance=tree,
+        metadata_instance=metadata_list,
         use_cache=use_cache,
         enable_parallel=enable_parallel,
         parallel_workers=parallel_workers,
@@ -323,7 +384,15 @@ def query_frame(query_keypoints: dict[str, np.ndarray],
         print("=" * 80)
         print("帧检索查询系统（关节对分组八叉树 + 旋转增强）")
         print("=" * 80)
-        print(f"\n查询完成！")
+        
+        # 输出动作分类信息
+        print(f"\n[动作识别结果]")
+        if action_name:
+            print(f"  查询帧识别为: {action_name} (匹配叶节点 #{leaf_idx})")
+        else:
+            print(f"  查询帧匹配叶节点 #{leaf_idx} (暂无动作名称记录)")
+            
+        print(f"\n[检索性能统计]")
         print(f"  候选帧数量: {len(candidate_ids)}")
         print(f"  八叉树查询用时: {tree_elapsed:.4f} 秒")
         print(f"  精确计算用时: {sim_elapsed:.4f} 秒")
@@ -354,46 +423,22 @@ def find_frames_in_same_node(query_keypoints: dict[str, np.ndarray],
     else:
         tree, _, _ = _load_model_once(model_tree_path, model_metadata_path, use_cache=use_cache, show_progress=False)
     
-    # 2. 标准化查询关键点
-    body = coerce_body_keypoints(query_keypoints)
-    keypoint_map = body.as_dict()
-
-    # 3. 沿着树向下走到底
-    current_node = 0  # 从根节点开始
-    for depth in range(config.MAX_DEPTH):
-        # 获取当前层级的活跃关节对
-        from octree_builder import _get_active_joint_names
-        active_names = _get_active_joint_names(depth)
-        
-        # 计算当前层的 octants
-        octants = tuple(
-            compute_octant(keypoint_map[name], BoundingBox.from_tuple(
-                (tuple(tree.bboxes[current_node, tree.keypoint_names.index(name), 0:3]),
-                 tuple(tree.bboxes[current_node, tree.keypoint_names.index(name), 3:6]))
-            ))
-            for name in active_names
-        )
-        
-        # 寻找匹配的子节点
-        keys, indices = tree.get_children(current_node)
-        found_next = False
-        for i, key in enumerate(keys):
-            if tuple(key[:len(octants)]) == octants:
-                current_node = indices[i]
-                found_next = True
-                break
-        
-        if not found_next:
-            if verbose:
-                print(f"警告: 在深度 {depth} 处未找到匹配的子节点，返回当前节点的结果。")
-            break
+    # 2. 沿着树向下走到底
+    current_node = get_node_index_for_query(tree, query_keypoints)
             
-    # 4. 获取该节点的所有帧
+    # 3. 获取该节点的所有帧
     frame_ids = list(tree.get_frame_ids(current_node))
     
     if verbose:
         print(f"\n同节点查询完成！")
         print(f"  叶子节点索引: {current_node}")
+        
+        # 尝试输出标签
+        labels = _load_leaf_labels()
+        name = labels.get(str(current_node))
+        if name:
+            print(f"  动作名称: {name}")
+        
         print(f"  同节点帧数量: {len(frame_ids)}")
         print(f"  帧ID列表: {frame_ids[:10]}{'...' if len(frame_ids) > 10 else ''}")
         
