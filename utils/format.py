@@ -101,7 +101,7 @@ def main():
     args = parser.parse_args()
     
     skaters = ['Skater_A', 'Skater_B', 'Skater_C', 'Skater_D']
-    jumps = ['Axel', 'Comb', 'Flip', 'Lutz', 'Salchow', 'Loop', 'Toeloop']
+    jumps = ['Axel', 'Comb', 'Flip', '结果导出', 'Salchow', 'Loop', 'Toeloop']
 
     files = [Path(f'./data/json/{skater}/{jump}/{f}')
              for skater in skaters
