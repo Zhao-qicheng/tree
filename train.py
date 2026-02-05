@@ -21,6 +21,65 @@ from rotation_utils import create_custom_rotation_configs, RotationConfig
 import config
 
 
+def align_skeleton(frame):
+    """
+    骨架对齐函数：
+    1. 中心化：将 Hip (节点0) 移至原点 (此步骤实际稍后 coerce_body_keypoints 也会做，但为了旋转计算先做一遍)
+    2. 旋转对齐：使 左胯(4)-右胯(1) 向量平行于 X 轴
+    
+    frame: 字典形式 {'hip': [x,y,z], ...} 或 numpy 数组
+    """
+    # 提取关键点坐标数组 (17, 3)
+    # 注意：这里需要确保顺序与 config.KEYPOINT_NAMES 一致
+    coords = []
+    names = config.KEYPOINT_NAMES
+    
+    # 输入如果是字典转换成数组处理
+    is_dict = isinstance(frame, dict)
+    if is_dict:
+        for name in names:
+            coords.append(frame[name])
+        coords = np.array(coords)
+    else:
+        coords = frame
+
+    # 1. 中心化
+    hip = coords[0]
+    centered = coords - hip
+
+    # 2. 旋转对齐
+    # 计算骨盆向量：从左胯 (4) 指向右胯 (1)
+    # 根据 config: 1=rHip, 4=lHip
+    v_hip = centered[1] - centered[4] 
+    
+    # 投影到 XY 平面
+    v_hip_xy = np.array([v_hip[0], v_hip[1], 0])
+    norm = np.linalg.norm(v_hip_xy)
+    
+    if norm < 1e-6:
+        aligned = centered # 避免除零
+    else:
+        v_hip_norm = v_hip_xy / norm
+        
+        # 目标是让左胯->右胯指向 X 轴正方向 (1, 0, 0)
+        # 计算当前向量与 X 轴的夹角
+        theta = np.arctan2(v_hip_norm[1], v_hip_norm[0])
+        
+        # 旋转矩阵 (绕 Z 轴旋转 -theta)
+        c, s = np.cos(-theta), np.sin(-theta)
+        R = np.array([
+            [c, -s, 0],
+            [s, c, 0],
+            [0, 0, 1]
+        ])
+        
+        aligned = centered @ R.T
+
+    # 如果输入是字典，转回字典
+    if is_dict:
+        return {name: aligned[i] for i, name in enumerate(names)}
+    return aligned
+
 def generate_frame_id(source_file: str, frame_index: int) -> str:
     """生成帧 ID"""
     filename = Path(source_file).stem
@@ -34,18 +93,25 @@ def _load_frame_worker_npy(payload: tuple[int, str]) -> dict:
     
     frame_index, npy_file = payload
     try:
-        keypoints = load_keypoints_from_npy(frame_index, npy_file)
+        keypoints_raw = load_keypoints_from_npy(frame_index, npy_file)
+        
+        # === 执行旋转对齐 ===
+        # aligned_keypoints 已经是中心化并旋转对齐后的结果
+        aligned_keypoints = align_skeleton(keypoints_raw)
+        
         frame_id = generate_frame_id_from_npy(npy_file, frame_index)
+        
+        # 注意：这里我们使用对齐后的数据进行后续存储和训练
         rounded_keypoints = {
             name: np.round(pos, config.JSON_FLOAT_PRECISION)
-            for name, pos in keypoints.items()
+            for name, pos in aligned_keypoints.items()
         }
         return {
             "success": True,
             "frame_index": frame_index,
             "source_file": npy_file,
             "frame_id": frame_id,
-            "keypoints": keypoints,
+            "keypoints": aligned_keypoints, # 使用对齐后的数据
             "rounded_keypoints": rounded_keypoints,
         }
     except Exception as exc:

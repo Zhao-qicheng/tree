@@ -34,9 +34,10 @@ class _BuilderNode:
     用于构建过程的临时节点类。
     仅在内存中存在，构建完成后转换为 FlatOctree 并销毁。
     """
-    def __init__(self, depth: int, bboxes: Dict[str, BoundingBox], parent: Optional['_BuilderNode'] = None):
+    def __init__(self, depth: int, bboxes: Dict[str, BoundingBox], parent: Optional['_BuilderNode'] = None, path_code: str = ""):
         self.depth = depth
         self.parent = parent
+        self.path_code = path_code # 空间路径编码：例如 "R-7-3-0"
         self.children: Dict[MultiPointOctant, _BuilderNode] = {}
         self.bboxes = bboxes
         self.frame_ids: List[str] = []
@@ -57,7 +58,11 @@ class _BuilderNode:
             bbox = self.bboxes[name]
             child_bboxes[name] = bbox.subdivide(octants[idx])
             
-        child = _BuilderNode(depth=self.depth + 1, bboxes=child_bboxes, parent=self)
+        # 生成子节点的路径编码
+        octant_str = "".join(str(o) for o in octants)
+        child_path = f"{self.path_code}-{octant_str}" if self.path_code else octant_str
+            
+        child = _BuilderNode(depth=self.depth + 1, bboxes=child_bboxes, parent=self, path_code=child_path)
         self.children[octants] = child
         return child
 
@@ -79,7 +84,7 @@ def _create_root_bboxes() -> dict[str, BoundingBox]:
 
 def create_root_node() -> _BuilderNode:
     """构建根节点"""
-    return _BuilderNode(depth=0, bboxes=_create_root_bboxes(), parent=None)
+    return _BuilderNode(depth=0, bboxes=_create_root_bboxes(), parent=None, path_code="R") # R 代表 Root
 
 def insert_frame(root: _BuilderNode, keypoints: KeypointInput, frame_id: str) -> None:
     """
@@ -143,6 +148,7 @@ def build_flat_tree(root: _BuilderNode) -> FlatOctree:
     
     flat.node_depth = np.zeros(num_nodes, dtype=np.int8)
     flat.node_parent_idx = np.full(num_nodes, -1, dtype=np.int32)
+    flat.node_path_codes = np.zeros(num_nodes, dtype='U64') # 假设最大深度不会导致路径过长
     flat.bboxes = np.zeros((num_nodes, num_kps, 6), dtype=np.float32)
     
     # 子节点 CSR 数组
@@ -165,6 +171,8 @@ def build_flat_tree(root: _BuilderNode) -> FlatOctree:
         flat.node_depth[i] = node.depth
         if node.parent is not None:
             flat.node_parent_idx[i] = node_to_idx[node.parent]
+            
+        flat.node_path_codes[i] = node.path_code
             
         # 包围盒
         for k, name in enumerate(kp_names):

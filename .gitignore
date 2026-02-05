@@ -7,6 +7,7 @@
 *.tree
 *.npz
 *.bvh
+*.csv
 
 data_test/
 data_train/

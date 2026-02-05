@@ -17,7 +17,7 @@ from typing import Dict, Tuple
 DATA_SOURCE_TYPE: str = "npy"
 
 # FS-Jump3D 数据目录（NPY 格式）
-FS_JUMP3D_DATA_DIR: str = "c:/Users/86158/Desktop/数据集/FS-Jump3D-main/data/npy/Skater_A/Axel/Axel_1.npy"
+FS_JUMP3D_DATA_DIR: str = "c:/Users/86158/Desktop/数据集/FS-Jump3D-main/data/npy/Skater_A/Axel"
 
 # 标准骨骼比例（基于数据集平均值，以 Hip->Neck 总长度为 100.0 时的比例）
 # 格式: "parentIdx_childIdx": 比例值
@@ -80,8 +80,10 @@ OCTREE_KEYPOINT_NAMES = (
 # 关节对配置（16个关节分成8组，每组2个）
 # 将关键点按对分组，每组在八叉树的一定深度范围内使用
 JOINT_PAIRS = (
-    ("chest", "spine"),       # 躯干核心
-    ("neck", "head"),         # 头部
+    # ("chest", "spine"),       # 躯干核心
+    # ("neck", "head"),         # 头部
+    ("spine", "head"), # 躯干核心
+    
     ("lWrist", "rWrist"),     # 双手腕
     ("lAnkle", "rAnkle"),     # 双足踝
 )

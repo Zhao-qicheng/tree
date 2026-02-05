@@ -45,13 +45,27 @@ def load_data():
             
     # 转换为 DataFrame 方便表格显示
     table_data = []
+    
+    # 检查是否存在 path_codes
+    has_path_codes = hasattr(tree, 'node_path_codes') and tree.node_path_codes is not None
+    
     for idx in leaf_indices:
         f_start = tree.frame_ids_start[idx]
         f_end = tree.frame_ids_start[idx + 1]
+        
+        path_code = ""
+        if has_path_codes:
+            path_code = str(tree.node_path_codes[idx])
+        
+        # 优先使用 path_code 作为 key，否则使用 idx
+        label_key = path_code if path_code else str(idx)
+        
         table_data.append({
             "idx": idx,
+            "code": path_code if path_code else "---",
             "count": f_end - f_start,
-            "label": labels.get(str(idx), "---")
+            "label": labels.get(label_key, "---"),
+            "key": label_key # 内部使用的唯一键
         })
     
     df = pd.DataFrame(table_data).sort_values(by="count", ascending=False)
@@ -119,7 +133,8 @@ app.layout = html.Div([
             dash_table.DataTable(
                 id='leaf-table',
                 columns=[
-                    {"name": "编号", "id": "idx"},
+                    {"name": "编码", "id": "code"},
+                    {"name": "ID", "id": "idx"},
                     {"name": "帧数", "id": "count"},
                     {"name": "动作名称", "id": "label"}
                 ],
@@ -294,7 +309,8 @@ def update_pose_display(current_idx, selected_rows, table_data):
     
     fig = go.Figure(data=[scatter_other, scatter_active] + bones_traces, layout=layout)
     
-    info_text = f"Leaf #{leaf_idx} | 总帧数: {num_frames} | 状态: {'已命名' if label != '---' else '待分类'}"
+    key = row_data.get('key', str(leaf_idx))
+    info_text = f"Code: {row_data.get('code', 'N/A')} | Frame: {num_frames} | 状态: {'已命名' if label != '---' else '待分类'}"
     input_val = label if label != "---" else ""
     counter_text = f"{current_idx + 1} / {num_frames}"
     
@@ -313,7 +329,10 @@ def save_label(n_clicks, new_name, selected_rows, current_data):
         return dash.no_update, ""
     
     row_idx = selected_rows[0]
-    leaf_idx = current_data[row_idx]['idx']
+    row_data = current_data[row_idx]
+    leaf_idx = row_data['idx']
+    # 使用 path_code (如果存在) 作为持久化 Key
+    save_key = row_data.get('key', str(leaf_idx))
     
     # 加载 JSON 并保存
     labels = {}
@@ -321,7 +340,7 @@ def save_label(n_clicks, new_name, selected_rows, current_data):
         with open(DEFAULT_LABELS, 'r', encoding='utf-8') as f:
             labels = json.load(f)
             
-    labels[str(leaf_idx)] = new_name
+    labels[save_key] = new_name
     
     with open(DEFAULT_LABELS, 'w', encoding='utf-8') as f:
         json.dump(labels, f, ensure_ascii=False, indent=4)
@@ -329,9 +348,9 @@ def save_label(n_clicks, new_name, selected_rows, current_data):
     # 更新内存中的数据
     current_data[row_idx]['label'] = new_name
     
-    return current_data, f"✔️ 成功保存 #{leaf_idx} 为 '{new_name}'"
+    return current_data, f"✔️ 成功保存 [{save_key}] 为 '{new_name}'"
 
 if __name__ == '__main__':
     print("八叉树探索器启动中...")
-    print("请访问: http://127.0.0.1:8050")
-    app.run(debug=True, use_reloader=False)
+    print("请访问: http://127.0.0.1:8051")
+    app.run(debug=True, use_reloader=False, port=8051)

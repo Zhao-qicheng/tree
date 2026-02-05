@@ -61,9 +61,12 @@ def align_skeleton(frame):
     aligned = centered @ R.T
     return aligned
 
-def load_and_process_data(root_dir='./data/npy/Skater_A/Axel'):
+def load_and_process_data(root_dir='./data/npy/Skater_A/Axel/Axel_1.npy'):
     """
-    加载所有 .npy 数据，执行对齐，并使用 t-SNE 进行降维映射。
+    加载 .npy 数据，执行对齐，并使用 t-SNE 进行降维映射。
+    支持两种输入：
+    - 单个 .npy 文件路径
+    - 包含多个 .npy 文件的目录路径
     """
     all_frames = []
     metadata = []  # 存储每帧的元数据：文件名、帧号、完整路径、运动员ID
@@ -72,35 +75,48 @@ def load_and_process_data(root_dir='./data/npy/Skater_A/Axel'):
     files_processed = 0
     start_time = time.time()
     
-    for root, dirs, files in os.walk(root_dir):
-        for f in files:
-            if f.endswith('.npy'):
-                path = os.path.join(root, f)
-                data = np.load(path) # shape: (总帧数, 17个关节, 3个坐标)
-                
-                # 遍历文件中的每一帧进行预处理
-                for i in range(0,data.shape[0]): 
-                    frame = data[i]
-                    aligned = align_skeleton(frame)
-                    
-                    # 路径解析逻辑：根据文件夹结构提取运动员名称
-                    # 路径示例: .../data/npy/Skater_A/Axel/Axel_1.npy
-                    path_parts = os.path.normpath(path).split(os.sep)
-                    try:
-                        # 定位 'npy' 目录，紧随其后的就是运动员 ID
-                        npy_index = path_parts.index('npy')
-                        skater_name = path_parts[npy_index + 1]
-                    except ValueError:
-                         skater_name = 'Unknown'
-
-                    all_frames.append(aligned.flatten())
-                    metadata.append({
-                        'file': f,
-                        'frame': i,
-                        'path': path,
-                        'skater': skater_name
-                    })
-                files_processed += 1
+    def process_single_file(path):
+        """处理单个 .npy 文件"""
+        nonlocal files_processed
+        data = np.load(path)  # shape: (总帧数, 17个关节, 3个坐标)
+        filename = os.path.basename(path)
+        
+        # 遍历文件中的每一帧进行预处理
+        for i in range(data.shape[0]):
+            frame = data[i]
+            aligned = align_skeleton(frame)
+            
+            # 路径解析逻辑：根据文件夹结构提取运动员名称
+            path_parts = os.path.normpath(path).split(os.sep)
+            try:
+                npy_index = path_parts.index('npy')
+                skater_name = path_parts[npy_index + 1]
+            except ValueError:
+                skater_name = 'Unknown'
+            
+            all_frames.append(aligned.flatten())
+            metadata.append({
+                'file': filename,
+                'frame': i,
+                'path': path,
+                'skater': skater_name
+            })
+        files_processed += 1
+    
+    # 判断输入是文件还是目录
+    if os.path.isfile(root_dir) and root_dir.endswith('.npy'):
+        # 单文件模式
+        process_single_file(root_dir)
+    elif os.path.isdir(root_dir):
+        # 目录模式：递归遍历
+        for root, dirs, files in os.walk(root_dir):
+            for f in files:
+                if f.endswith('.npy'):
+                    path = os.path.join(root, f)
+                    process_single_file(path)
+    else:
+        print(f"错误：路径不存在或不是有效的 .npy 文件/目录: {root_dir}")
+        return pd.DataFrame()
 
     print(f"数据加载完成。处理了 {files_processed} 个文件，共 {len(all_frames)} 帧。耗时: {time.time()-start_time:.2f}s")
     

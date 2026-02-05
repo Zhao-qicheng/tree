@@ -26,6 +26,9 @@ class FlatOctree:
         # 父节点索引 (int32), 根节点为 -1
         self.node_parent_idx: Optional[np.ndarray] = None
         
+        # 节点路径编码 (String) - 用于稳定索引
+        self.node_path_codes: Optional[np.ndarray] = None
+        
         # ================= 包围盒 (N, 15, 6) =================
         # 存储每个节点的所有关键点包围盒
         # 维度1: 节点索引
@@ -62,6 +65,7 @@ class FlatOctree:
             keypoint_names=self.keypoint_names,
             node_depth=self.node_depth,
             node_parent_idx=self.node_parent_idx,
+            node_path_codes=self.node_path_codes,
             bboxes=self.bboxes,
             children_start=self.children_start,
             children_keys=self.children_keys,
@@ -91,6 +95,11 @@ class FlatOctree:
         
         instance.node_depth = data['node_depth']
         instance.node_parent_idx = data['node_parent_idx']
+        
+        # 兼容旧版模型文件：如果不存在 path_codes，则稍后处理或设为 None
+        if 'node_path_codes' in data:
+            instance.node_path_codes = data['node_path_codes']
+            
         instance.bboxes = data['bboxes']
         
         instance.children_start = data['children_start']
