@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 from pathlib import Path
@@ -22,6 +23,64 @@ import config
 
 
 _MODEL_CACHE: dict[Tuple[str, str], Tuple[FlatOctree, List[FrameMetadata]]] = {}
+_THIS_DIR = Path(__file__).resolve().parent
+
+
+def _strip_surrounding_quotes(text: str) -> str:
+    s = text.strip()
+    if len(s) >= 2 and ((s[0] == s[-1] == '"') or (s[0] == s[-1] == "'")):
+        return s[1:-1]
+    return s
+
+
+def _resolve_path_arg(path_text: str, *, base_dir: Path) -> Path:
+    """
+    解析路径参数，兼容：
+    - 绝对路径：原样使用
+    - 相对路径：优先相对当前工作目录，其次相对脚本目录
+    - 环境变量与 ~ 展开
+    """
+    raw = _strip_surrounding_quotes(path_text)
+    expanded = os.path.expandvars(raw)
+    p = Path(expanded).expanduser()
+
+    if p.is_absolute():
+        return p
+
+    cwd_candidate = (Path.cwd() / p)
+    if cwd_candidate.exists():
+        return cwd_candidate
+
+    base_candidate = (base_dir / p)
+    if base_candidate.exists():
+        return base_candidate
+
+    # 回退：即便不存在，也保持相对 CWD 的语义
+    return cwd_candidate
+
+
+def _resolve_model_file_arg(path_text: str, *, base_dir: Path, default_filename: str) -> Path:
+    """
+    模型路径参数既可以是文件路径，也可以直接给目录：
+    - 若是目录，则自动拼接默认文件名（如 model.npz / model.pkl）
+    """
+    p = _resolve_path_arg(path_text, base_dir=base_dir)
+    if p.exists() and p.is_dir():
+        return p / default_filename
+    return p
+
+
+def _ensure_file_exists(p: Path, *, arg_name: str) -> None:
+    if p.exists() and p.is_file():
+        return
+    raise FileNotFoundError(
+        f"找不到 {arg_name} 指定的文件: {p}\n"
+        f"请先训练生成模型，或在命令行显式传入绝对路径：\n"
+        f"  --model-tree <...\\model.npz> --model-metadata <...\\model.pkl>\n"
+        f"例如：\n"
+        f"  python query.py --npy-file <你的npy> --frame-index <idx> "
+        f"--model-tree D:\\path\\to\\model.npz --model-metadata D:\\path\\to\\model.pkl\n"
+    )
 
 
 def _compute_node_distances_batch(
@@ -216,6 +275,10 @@ def _load_model_once(model_tree_path: str,
                      use_cache: bool = True,
                      show_progress: bool = True) -> tuple[FlatOctree, List[FrameMetadata], bool]:
     """加载模型，支持缓存"""
+    # 更早给出可读的错误提示（避免 deep stacktrace）
+    _ensure_file_exists(Path(model_tree_path), arg_name="--model-tree")
+    _ensure_file_exists(Path(model_metadata_path), arg_name="--model-metadata")
+
     cache_key = (
         str(Path(model_tree_path).resolve()),
         str(Path(model_metadata_path).resolve()),
@@ -362,6 +425,10 @@ def query_from_bvh(bvh_file: str,
                   enable_parallel: bool = True,
                   parallel_workers: Optional[int] = None) -> List[SimilarityResult]:
     from data_loader import load_keypoints_from_bvh
+
+    bvh_file = str(_resolve_path_arg(bvh_file, base_dir=_THIS_DIR))
+    model_tree_path = str(_resolve_model_file_arg(model_tree_path, base_dir=_THIS_DIR, default_filename="model.npz"))
+    model_metadata_path = str(_resolve_model_file_arg(model_metadata_path, base_dir=_THIS_DIR, default_filename="model.pkl"))
     
     if verbose:
         print(f"\n从BVH文件加载查询帧...")
@@ -410,6 +477,10 @@ def query_from_npy(npy_file: str,
         相似度结果列表
     """
     from npy_loader import load_keypoints_from_npy
+
+    npy_file = str(_resolve_path_arg(npy_file, base_dir=_THIS_DIR))
+    model_tree_path = str(_resolve_model_file_arg(model_tree_path, base_dir=_THIS_DIR, default_filename="model.npz"))
+    model_metadata_path = str(_resolve_model_file_arg(model_metadata_path, base_dir=_THIS_DIR, default_filename="model.pkl"))
     
     if verbose:
         print(f"\n从NPY文件加载查询帧...")
@@ -440,6 +511,9 @@ def interactive_mode(model_tree_path: str,
     print("=" * 80)
     print("提示: 输入 \"<BVH路径> <帧索引>\", 或输入 q 退出。")
 
+    model_tree_path = str(_resolve_model_file_arg(model_tree_path, base_dir=_THIS_DIR, default_filename="model.npz"))
+    model_metadata_path = str(_resolve_model_file_arg(model_metadata_path, base_dir=_THIS_DIR, default_filename="model.pkl"))
+
     load_start = time.time()
     tree, metadata_list, from_cache = _load_model_once(
         model_tree_path,
@@ -468,14 +542,19 @@ def interactive_mode(model_tree_path: str,
             print("输入格式错误，请使用: <BVH路径> <帧索引>")
             continue
 
-        frame_index_str = parts[-1]
-        bvh_file = " ".join(parts[:-1])
+        # 兼容包含空格的路径，并避免对 Windows 反斜杠做转义处理
+        frame_index_token = parts[-1]
+        frame_index_str = _strip_surrounding_quotes(frame_index_token)
+        bvh_file_text = user_input[: user_input.rfind(frame_index_token)].strip()
+        bvh_file = _strip_surrounding_quotes(bvh_file_text)
 
         try:
             frame_index = int(frame_index_str)
         except ValueError:
             print("帧索引必须为整数。")
             continue
+
+        bvh_file = str(_resolve_path_arg(bvh_file, base_dir=_THIS_DIR))
 
         if not Path(bvh_file).exists():
             print(f"BVH文件不存在: {bvh_file}")
@@ -511,6 +590,14 @@ def main():
     parser.add_argument("--interactive", action="store_true", help="交互式模式")
     
     args = parser.parse_args()
+
+    # 统一路径解析：支持绝对路径 / 相对路径 / 目录（自动补 model.npz/model.pkl）
+    args.model_tree = str(_resolve_model_file_arg(args.model_tree, base_dir=_THIS_DIR, default_filename="model.npz"))
+    args.model_metadata = str(_resolve_model_file_arg(args.model_metadata, base_dir=_THIS_DIR, default_filename="model.pkl"))
+    if args.npy_file:
+        args.npy_file = str(_resolve_path_arg(args.npy_file, base_dir=_THIS_DIR))
+    if args.bvh_file:
+        args.bvh_file = str(_resolve_path_arg(args.bvh_file, base_dir=_THIS_DIR))
     
     try:
         if args.interactive:

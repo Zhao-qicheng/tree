@@ -137,7 +137,7 @@ def show_3D_pose_animation(pose3d_seq: np.ndarray, connections: list, title: str
 def main():
     # 命令行参数解析
     parser = ArgumentParser(description="用于可视化 .npy 格式 3D 位姿数据的脚本。")
-    parser.add_argument("--path", type=str, default='./data/npy/Skater_A/Axel/Axel_1.npy', help=".npy 文件的路径。")
+    parser.add_argument("--path", type=str, default=r'D:\work\讨论\FS-Jump3D-main\FS-Jump3D-main\data\npy\Skater_A\Lutz\Lutz_1.npy', help=".npy 文件的路径。")
     parser.add_argument("--frame", type=int, default=-1, help="指定显示的静态帧索引；若设为 -1（默认值）则进入动画模式。")
     parser.add_argument("--center", action="store_true", help="将骨架重心（髋部/节点0）置于原点中心。")
     

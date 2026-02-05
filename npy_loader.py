@@ -322,7 +322,7 @@ def generate_frame_id_from_npy(npy_file: str, frame_index: int) -> str:
 if __name__ == "__main__":
     import sys
     
-    test_dir = "c:/Users/86158/Desktop/数据集/FS-Jump3D-main/data/npy"
+    test_dir = r"D:\work\讨论\FS-Jump3D-main\FS-Jump3D-main\data\npy"
     
     print("=" * 60)
     print("NPY 加载器测试")

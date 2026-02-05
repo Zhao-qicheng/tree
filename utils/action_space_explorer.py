@@ -61,7 +61,7 @@ def align_skeleton(frame):
     aligned = centered @ R.T
     return aligned
 
-def load_and_process_data(root_dir='./data/npy/Skater_A/Axel'):
+def load_and_process_data(root_dir=r'D:\work\讨论\FS-Jump3D-main\FS-Jump3D-main\data\npy\Skater_A\Toeloop'):
     """
     加载所有 .npy 数据，执行对齐，并使用 t-SNE 进行降维映射。
     """

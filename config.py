@@ -17,7 +17,7 @@ from typing import Dict, Tuple
 DATA_SOURCE_TYPE: str = "npy"
 
 # FS-Jump3D 数据目录（NPY 格式）
-FS_JUMP3D_DATA_DIR: str = "c:/Users/86158/Desktop/数据集/FS-Jump3D-main/data/npy"
+FS_JUMP3D_DATA_DIR: str = r"D:\work\讨论\FS-Jump3D-main\FS-Jump3D-main\data\npy"
 
 # 标准骨骼比例（基于数据集平均值，以 Hip->Neck 总长度为 100.0 时的比例）
 # 格式: "parentIdx_childIdx": 比例值
