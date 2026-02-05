@@ -60,34 +60,38 @@ KEYPOINT_NAMES = (
 # 用于八叉树迭代的关键点（排除原点 hip）
 OCTREE_KEYPOINT_NAMES = (
     "rHip",
-    "rKnee",
+    # "rKnee",
     "rAnkle",
     "lHip",
-    "lKnee",
+    # "lKnee",
     "lAnkle",
-    "spine",
-    "chest",
+    # "spine",
+    # "chest",
     "neck",
     "head",
-    "lShoulder",
-    "lElbow",
+    # "lShoulder",
+    # "lElbow",
     "lWrist",
-    "rShoulder",
-    "rElbow",
+    # "rShoulder",
+    # "rElbow",
     "rWrist",
 )
 
 # 关节对配置（16个关节分成8组，每组2个）
 # 将关键点按对分组，每组在八叉树的一定深度范围内使用
 JOINT_PAIRS = (
-    ("chest", "spine"),       # 躯干核心
-    ("neck", "head"),         # 头部
-    ("lShoulder", "lElbow"),  # 左臂上部
-    ("lWrist", "rShoulder"),  # 左手腕+右肩
-    ("rElbow", "rWrist"),     # 右臂
-    ("lHip", "lKnee"),        # 左腿上部
-    ("lAnkle", "rHip"),       # 左踝+右髋
-    ("rKnee", "rAnkle"),      # 右腿下部
+    # ("chest", "spine"),       # 躯干核心
+    # ("neck", "head"),         # 头部
+    # ("lShoulder", "lElbow"),  # 左臂上部
+    # ("lWrist", "rShoulder"),  # 左手腕+右肩
+    # ("rElbow", "rWrist"),     # 右臂
+    # ("lHip", "lKnee"),        # 左腿上部
+    # ("lAnkle", "rHip"),       # 左踝+右髋
+    # ("rKnee", "rAnkle"),      # 右腿下部
+    ("lHip","rHip"),
+    ("lAnkle", "rAnkle"),
+    ("lWrist", "rWrist"),
+    ("head","neck"),
 )
 
 # 每组关节对的迭代深度 n
