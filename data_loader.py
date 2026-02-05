@@ -66,24 +66,17 @@ def load_multiple_frames(frame_indices: List[int], bvh_file: str = 'data/walk.bv
 
 def load_all_bvh_files(data_dir: str = "data_train/") -> List[str]:
     """
-    扫描目录下所有.bvh文件，也支持扫描单个文件。
+    扫描目录下所有.bvh文件。
     
     参数:
-        data_dir: 数据目录或单个文件路径
+        data_dir: 数据目录路径
     
     返回:
         BVH文件路径列表
     """
     data_path = Path(data_dir)
     if not data_path.exists():
-        raise FileNotFoundError(f"路径 {data_dir} 不存在")
-    
-    # 如果是单个文件
-    if data_path.is_file():
-        if data_path.suffix.lower() == ".bvh":
-            return [str(data_path)]
-        else:
-            raise ValueError(f"文件 {data_dir} 不是 .bvh 文件")
+        raise FileNotFoundError(f"数据目录 {data_dir} 不存在")
     
     bvh_files = sorted(glob.glob(str(data_path / "*.bvh")))
     if not bvh_files:

@@ -188,7 +188,7 @@ def normalize_skeleton(frame: np.ndarray) -> np.ndarray:
 def load_keypoints_from_npy(frame_index: int, 
                             npy_file: str,
                             align: bool = True,
-                            normalize: bool = False) -> Dict[str, np.ndarray]:
+                            normalize: bool = True) -> Dict[str, np.ndarray]:
     """
     从 NPY 文件加载指定帧的关键点。
     
@@ -230,10 +230,10 @@ def load_keypoints_from_npy(frame_index: int,
 
 def load_all_npy_files(data_dir: str) -> List[str]:
     """
-    扫描目录下所有 .npy 文件，也支持扫描单个文件。
+    递归扫描目录下所有 .npy 文件，也支持单个文件路径。
     
     参数:
-        data_dir: 数据目录或单个文件路径
+        data_dir: 数据目录路径或单个 NPY 文件路径
     
     返回:
         NPY 文件路径列表
@@ -244,10 +244,9 @@ def load_all_npy_files(data_dir: str) -> List[str]:
     
     # 如果是单个文件
     if data_path.is_file():
-        if data_path.suffix.lower() == ".npy":
-            return [str(data_path)]
-        else:
-            raise ValueError(f"文件 {data_dir} 不是 .npy 文件")
+        if data_path.suffix.lower() != ".npy":
+            raise ValueError(f"不是 NPY 文件: {data_dir}")
+        return [str(data_path.resolve())]
     
     # 递归搜索目录
     npy_files = sorted(glob.glob(str(data_path / "**/*.npy"), recursive=True))
@@ -329,7 +328,7 @@ def generate_frame_id_from_npy(npy_file: str, frame_index: int) -> str:
 if __name__ == "__main__":
     import sys
     
-    test_dir = "c:/Users/86158/Desktop/数据集/FS-Jump3D-main/data/npy"
+    test_dir = r"D:\work\讨论\FS-Jump3D-main\FS-Jump3D-main\data\npy"
     
     print("=" * 60)
     print("NPY 加载器测试")
