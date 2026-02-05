@@ -10,7 +10,7 @@ H36M_CONNECTIONS = [
     (12, 13), (14, 15), (15, 16)
 ]
 
-def get_pose_objects(pose, connections, color='black', line_color='red'):
+def get_pose_objects(pose, connections, color='#2E86AB', line_color='#E94F37', show_labels=True):
     """
     生成单个姿态的绘图对象（关节点和骨干连线）。
     
@@ -19,24 +19,30 @@ def get_pose_objects(pose, connections, color='black', line_color='red'):
         connections: 骨骼连接列表
         color: 关节点的颜色
         line_color: 骨干连线的颜色
+        show_labels: 是否显示关节点索引
     返回:
         [scatter, lines]: 包含 Plotly 散点对象和线条对象的列表
     """
-    # 绘制关节点（散点图）
+    # 绘制关节点（散点图）- 增大尺寸、添加边框提升可见度
     scatter = go.Scatter3d(
         x=pose[:, 0], y=pose[:, 1], z=pose[:, 2],
-        mode='markers+text',
-        marker=dict(size=1.5, color=color),
-        text=[str(i) for i in range(pose.shape[0])], # 显示关节点索引编号
+        mode='markers+text' if show_labels else 'markers',
+        marker=dict(
+            size=6,
+            color=color,
+            line=dict(width=1.5, color='#1a1a1a'),
+            opacity=0.95
+        ),
+        text=[str(i) for i in range(pose.shape[0])] if show_labels else None,
         textposition="top center",
+        textfont=dict(size=10, color='#333333', family='Arial'),
         name='关键点'
     )
     
-    # 绘制骨干连线
+    # 绘制骨干连线 - 加粗线条、使用更醒目的颜色
     x_lines, y_lines, z_lines = [], [], []
     for c1, c2 in connections:
         if c1 < pose.shape[0] and c2 < pose.shape[0]:
-            # 添加起点、终点和 None（None 用于在 Plotly 中断开连线）
             x_lines.extend([pose[c1, 0], pose[c2, 0], None])
             y_lines.extend([pose[c1, 1], pose[c2, 1], None])
             z_lines.extend([pose[c1, 2], pose[c2, 2], None])
@@ -44,40 +50,50 @@ def get_pose_objects(pose, connections, color='black', line_color='red'):
     lines = go.Scatter3d(
         x=x_lines, y=y_lines, z=z_lines,
         mode='lines',
-        line=dict(width=4, color=line_color),
+        line=dict(width=5, color=line_color),
         name='骨架连线'
     )
     return [scatter, lines]
 
-def show_3D_pose_static(pose3d: np.ndarray, connections: list, title: str = "3D 姿态可视化"):
+def show_3D_pose_static(pose3d: np.ndarray, connections: list, title: str = "3D 姿态可视化", show_labels: bool = True):
     """
     使用 Plotly 显示单个静态 3D 姿态。
     """
-    data_objs = get_pose_objects(pose3d, connections)
+    data_objs = get_pose_objects(pose3d, connections, show_labels=show_labels)
     fig = go.Figure(data=data_objs)
 
-    # 根据当前姿态自动计算坐标轴范围，并添加 20% 的外边距
-    x_range = [pose3d[:, 0].min() - 200, pose3d[:, 0].max() + 200]
-    y_range = [pose3d[:, 1].min() - 200, pose3d[:, 1].max() + 200]
-    z_range = [pose3d[:, 2].min() - 200, pose3d[:, 2].max() + 200]
+    # 根据当前姿态自动计算坐标轴范围，并添加 15% 的外边距
+    x_min, x_max = pose3d[:, 0].min(), pose3d[:, 0].max()
+    y_min, y_max = pose3d[:, 1].min(), pose3d[:, 1].max()
+    z_min, z_max = pose3d[:, 2].min(), pose3d[:, 2].max()
+    pad = max(x_max - x_min, y_max - y_min, z_max - z_min, 200) * 0.15
+    x_range = [x_min - pad, x_max + pad]
+    y_range = [y_min - pad, y_max + pad]
+    z_range = [z_min - pad, z_max + pad]
 
     fig.update_layout(
-        title=title,
-        width=800, height=800,
+        title=dict(text=title, font=dict(size=18, color='#2c3e50')),
+        width=900, height=900,
+        paper_bgcolor='#f8f9fa',
+        font=dict(family='Microsoft YaHei, sans-serif', size=12),
         scene=dict(
-            xaxis=dict(title='X', range=x_range, visible=False),
-            yaxis=dict(title='Y', range=y_range, visible=False),
-            zaxis=dict(title='Z', range=z_range, visible=False),
-            aspectmode='cube' # 保持比例一致
+            xaxis=dict(title='X', range=x_range, visible=False, showgrid=True, gridcolor='#e0e0e0'),
+            yaxis=dict(title='Y', range=y_range, visible=False, showgrid=True, gridcolor='#e0e0e0'),
+            zaxis=dict(title='Z', range=z_range, visible=False, showgrid=True, gridcolor='#e0e0e0'),
+            aspectmode='cube',
+            bgcolor='#ffffff',
+            camera=dict(eye=dict(x=1.4, y=1.4, z=1.2), center=dict(x=0, y=0, z=0))
         ),
-        margin=dict(r=10, l=10, b=10, t=40)
+        margin=dict(r=20, l=20, b=20, t=60),
+        showlegend=True,
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1)
     )
     print(f"正在打开静态可视化窗口: {title}")
     fig.show()
 
-def show_3D_pose_animation(pose3d_seq: np.ndarray, connections: list, title: str = "3D 动画预览"):
+def show_3D_pose_animation(pose3d_seq: np.ndarray, connections: list, title: str = "3D 动画预览", show_labels: bool = False):
     """
-    带有自动适配坐标轴的 3D 姿态动画。
+    带有自动适配坐标轴的 3D 姿态动画。动画模式默认不显示关节点标签以提升流畅度。
     """
     num_frames = pose3d_seq.shape[0]
     
@@ -93,41 +109,47 @@ def show_3D_pose_animation(pose3d_seq: np.ndarray, connections: list, title: str
 
     # 1. 布局配置：包含播放控制、进度条和坐标轴设定
     layout = go.Layout(
-        title=title,
-        width=800, height=800,
+        title=dict(text=title, font=dict(size=18, color='#2c3e50')),
+        width=900, height=900,
+        paper_bgcolor='#f8f9fa',
+        font=dict(family='Microsoft YaHei, sans-serif', size=12),
         scene=dict(
-            xaxis=dict(title='X', range=[x_min - pad_x, x_max + pad_x], visible=False),
-            yaxis=dict(title='Y', range=[y_min - pad_y, y_max + pad_y], visible=False),
-            zaxis=dict(title='Z', range=[z_min - pad_z, z_max + pad_z], visible=False),
-            aspectmode='cube'
+            xaxis=dict(title='X', range=[x_min - pad_x, x_max + pad_x], visible=False, showgrid=True, gridcolor='#e0e0e0'),
+            yaxis=dict(title='Y', range=[y_min - pad_y, y_max + pad_y], visible=False, showgrid=True, gridcolor='#e0e0e0'),
+            zaxis=dict(title='Z', range=[z_min - pad_z, z_max + pad_z], visible=False, showgrid=True, gridcolor='#e0e0e0'),
+            aspectmode='cube',
+            bgcolor='#ffffff',
+            camera=dict(eye=dict(x=1.4, y=1.4, z=1.2), center=dict(x=0, y=0, z=0))
         ),
-        margin=dict(r=10, l=10, b=10, t=40),
+        margin=dict(r=20, l=20, b=80, t=60),
         # 添加播放/暂停按钮
         updatemenus=[dict(
             type="buttons",
             buttons=[
-                dict(label="播放 (Play)", method="animate", args=[None, dict(frame=dict(duration=50, redraw=True), fromcurrent=True)]),
-                dict(label="暂停 (Pause)", method="animate", args=[[None], dict(frame=dict(duration=0, redraw=False), mode="immediate")])
+                dict(label="▶ 播放", method="animate", args=[None, dict(frame=dict(duration=50, redraw=True), fromcurrent=True)]),
+                dict(label="⏸ 暂停", method="animate", args=[[None], dict(frame=dict(duration=0, redraw=False), mode="immediate")])
             ],
-            direction="left", pad={"r": 10, "t": 87}, x=0.1, y=0, xanchor="right", yanchor="top"
+            direction="left", pad={"r": 15, "t": 10}, x=0.1, y=0.02, xanchor="left", yanchor="bottom",
+            bgcolor='#ffffff', bordercolor='#dee2e6', borderwidth=1
         )],
         # 添加底部进度条（滑块）
         sliders=[dict(
             active=0, yanchor="top", xanchor="left",
-            currentvalue=dict(font=dict(size=20), prefix="当前帧: ", visible=True, xanchor="right"),
-            pad=dict(b=10, t=50), len=0.9, x=0.1, y=0,
+            currentvalue=dict(font=dict(size=14, color='#495057'), prefix="帧: ", visible=True, xanchor="right"),
+            pad=dict(b=15, t=10), len=0.9, x=0.05, y=0,
             steps=[dict(
                 args=[[f"frame_{k}"], dict(frame=dict(duration=0, redraw=True), mode="immediate")],
                 label=str(k), method="animate"
-            ) for k in range(num_frames)]
+            ) for k in range(num_frames)],
+            bgcolor='#f8f9fa', bordercolor='#dee2e6', borderwidth=1
         )]
     )
 
     # 2. 生成初始数据（第 0 帧）
-    initial_data = get_pose_objects(pose3d_seq[0], connections)
+    initial_data = get_pose_objects(pose3d_seq[0], connections, show_labels=show_labels)
     
     # 3. 生成每一帧的动画数据
-    frames = [go.Frame(data=get_pose_objects(pose3d_seq[k], connections), name=f"frame_{k}") for k in range(num_frames)]
+    frames = [go.Frame(data=get_pose_objects(pose3d_seq[k], connections, show_labels=show_labels), name=f"frame_{k}") for k in range(num_frames)]
 
     # 4. 构建并显示图表
     fig = go.Figure(data=initial_data, layout=layout, frames=frames)
@@ -140,6 +162,7 @@ def main():
     parser.add_argument("--path", type=str, default=r'D:\work\讨论\FS-Jump3D-main\FS-Jump3D-main\data\npy\Skater_A\Lutz\Lutz_1.npy', help=".npy 文件的路径。")
     parser.add_argument("--frame", type=int, default=-1, help="指定显示的静态帧索引；若设为 -1（默认值）则进入动画模式。")
     parser.add_argument("--center", action="store_true", help="将骨架重心（髋部/节点0）置于原点中心。")
+    parser.add_argument("--no-labels", action="store_true", help="隐藏关节点索引标签，使骨架更简洁。")
     
     args = parser.parse_args()
 
@@ -165,6 +188,7 @@ def main():
         filename = os.path.basename(args.path)
         title_suffix = " (已中心化)" if args.center else ""
 
+        show_labels = not args.no_labels
         # 根据参数选择显示模式
         if args.frame == -1:
             # 动画模式
@@ -172,7 +196,7 @@ def main():
         else:
             # 单帧静态模式
             if 0 <= args.frame < data.shape[0]:
-                show_3D_pose_static(data[args.frame], H36M_CONNECTIONS, title=f"文件: {filename}{title_suffix} | 帧耗: {args.frame}")
+                show_3D_pose_static(data[args.frame], H36M_CONNECTIONS, title=f"文件: {filename}{title_suffix} | 帧: {args.frame}", show_labels=show_labels)
             else:
                 print(f"错误: 帧索引 {args.frame} 超出范围 (该文件总帧数为 {data.shape[0]})。")
             

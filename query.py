@@ -127,6 +127,54 @@ def _compute_node_distances_batch(
     return total_dist / count
 
 
+def find_leaf_node_for_query(tree: FlatOctree, query_keypoints: dict[str, np.ndarray]) -> int:
+    """
+    给定 keypoints，沿树向下遍历，返回最终到达的叶节点（或回退停止处节点）索引。
+
+    说明：
+    - 与 `tree/query.py` 中的 `find_frames_in_same_node` 下沉逻辑一致；
+    - 若在某一层找不到匹配子节点，则回退并返回当前节点索引。
+    """
+    # 标准化查询关键点（确保包含完整关节集合，并做 hip 归一化）
+    body = coerce_body_keypoints(query_keypoints)
+    keypoint_map = body.as_dict()
+
+    current_node = 0  # 根节点
+
+    # 这里按“深度”推进（与构建时的 depth 语义一致）
+    from octree_builder import _get_active_joint_names
+
+    for depth in range(config.MAX_DEPTH):
+        active_names = _get_active_joint_names(depth)
+
+        # 计算当前层的 octants（只对活跃关节）
+        octants = tuple(
+            compute_octant(
+                keypoint_map[name],
+                BoundingBox.from_tuple(
+                    (
+                        tuple(tree.bboxes[current_node, tree.keypoint_names.index(name), 0:3]),
+                        tuple(tree.bboxes[current_node, tree.keypoint_names.index(name), 3:6]),
+                    )
+                ),
+            )
+            for name in active_names
+        )
+
+        keys, indices = tree.get_children(current_node)
+        found_next = False
+        for i, key in enumerate(keys):
+            if tuple(key[: len(octants)]) == octants:
+                current_node = int(indices[i])
+                found_next = True
+                break
+
+        if not found_next:
+            break
+
+    return int(current_node)
+
+
 def find_candidate_frames_from_tree(tree: FlatOctree,
                                     query_keypoints: dict[str, np.ndarray],
                                     min_candidates: int = None) -> list[str]:

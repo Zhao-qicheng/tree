@@ -60,20 +60,20 @@ KEYPOINT_NAMES = (
 # 用于八叉树迭代的关键点（排除原点 hip）
 OCTREE_KEYPOINT_NAMES = (
     "rHip",
-    # "rKnee",
+    "rKnee",
     "rAnkle",
     "lHip",
-    # "lKnee",
+    "lKnee",
     "lAnkle",
-    # "spine",
-    # "chest",
+    "spine",
+    "chest",
     "neck",
     "head",
-    # "lShoulder",
-    # "lElbow",
+    "lShoulder",
+    "lElbow",
     "lWrist",
-    # "rShoulder",
-    # "rElbow",
+    "rShoulder",
+    "rElbow",
     "rWrist",
 )
 
@@ -88,15 +88,20 @@ JOINT_PAIRS = (
     # ("lHip", "lKnee"),        # 左腿上部
     # ("lAnkle", "rHip"),       # 左踝+右髋
     # ("rKnee", "rAnkle"),      # 右腿下部
-    ("lHip","rHip"),
-    ("lAnkle", "rAnkle"),
-    ("lWrist", "rWrist"),
-    ("head","neck"),
+    # ("lHip","rHip"),
+    ("lAnkle",),
+    ("rAnkle",),
+    ("lWrist", ),
+    ("rWrist", ),
+    ("head",),
+    ("chest",),
+    ("neck",),
+    ("spine",),
 )
 
 # 每组关节对的迭代深度 n
 # 前 n 层使用第一组，n+1 到 2n 层使用第二组，以此类推
-PAIR_ITERATION_DEPTH: int = 2
+PAIR_ITERATION_DEPTH: int = 1
 
 # 八叉树相关配置
 # 动态计算最大深度
