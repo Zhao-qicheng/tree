@@ -140,7 +140,7 @@ def train_single_tree(data_dir: str,
     
     # 2. 扫描所有数据文件
     if verbose:
-        print(f"\n步骤1: 扫描 {data_dir} ...")
+        print(f"\n步骤1: 扫描 {data_dir} 目录...")
     
     data_files = load_all_files(data_dir)
     if verbose:
@@ -407,6 +407,7 @@ def main():
     
     parser = argparse.ArgumentParser(description="训练帧检索模型")
     parser.add_argument("--data-dir", default=None, help="数据目录路径")
+    parser.add_argument("--source-npy", default=None, help="单个 NPY 文件路径（优先于 --data-dir）")
     parser.add_argument("--output-tree", default="model.npz", help="输出树文件路径")
     parser.add_argument("--output-metadata", default="model.pkl", help="输出元数据文件路径")
     parser.add_argument("--quiet", action="store_true", help="静默模式")
@@ -415,6 +416,11 @@ def main():
                         help="数据源类型 (默认使用 config 配置)")
     
     args = parser.parse_args()
+    
+    # --source-npy 优先：指定单个 NPY 文件时，作为 data_dir 并强制 source_type=npy
+    if args.source_npy:
+        args.data_dir = args.source_npy
+        args.source_type = "npy"
     
     try:
         train_model(

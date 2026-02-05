@@ -1,0 +1,70 @@
+{
+  "accuracy": 0.583916083916084,
+  "total": 286,
+  "correct": 167,
+  "confusion": {
+    "Axel": {
+      "Axel": 167,
+      "Unknown": 119
+    },
+    "Unknown": {
+      "Axel": 0,
+      "Unknown": 0
+    }
+  },
+  "cluster_to_action": {
+    "2": "Axel",
+    "3": "Axel",
+    "8": "Axel",
+    "4": "Axel",
+    "7": "Axel",
+    "5": "Axel",
+    "1": "Axel",
+    "6": "Axel",
+    "0": "Axel",
+    "9": "Axel"
+  },
+  "labels": [
+    "Axel",
+    "Unknown"
+  ],
+  "missing_cluster_count": 119,
+  "report": {
+    "labels": [
+      "Axel",
+      "Unknown"
+    ],
+    "per_class": {
+      "Axel": {
+        "precision": 1.0,
+        "recall": 0.583916083916084,
+        "f1": 0.7373068432671082,
+        "support": 286,
+        "tp": 167,
+        "fp": 0,
+        "fn": 119
+      },
+      "Unknown": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "support": 0,
+        "tp": 0,
+        "fp": 119,
+        "fn": 0
+      }
+    },
+    "macro_avg": {
+      "precision": 0.5,
+      "recall": 0.291958041958042,
+      "f1": 0.3686534216335541
+    },
+    "weighted_avg": {
+      "precision": 1.0,
+      "recall": 0.583916083916084,
+      "f1": 0.7373068432671082
+    }
+  },
+  "leaf_count": 291,
+  "n_clusters": 10
+}

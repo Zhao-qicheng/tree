@@ -45,5 +45,5 @@ def analyze_skeleton_stats(data_dir):
     return normalized_results
 
 if __name__ == "__main__":
-    test_dir = "c:/Users/86158/Desktop/数据集/FS-Jump3D-main/data/npy"
+    test_dir = r"D:\work\讨论\FS-Jump3D-main\FS-Jump3D-main\data\npy"
     analyze_skeleton_stats(test_dir)

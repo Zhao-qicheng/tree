@@ -1,0 +1,88 @@
+{
+  "accuracy": 0.0,
+  "total": 286,
+  "correct": 0,
+  "confusion": {
+    "Axel": {
+      "Axel": 0,
+      "Unknown": 119,
+      "data": 167
+    },
+    "Unknown": {
+      "Axel": 0,
+      "Unknown": 0,
+      "data": 0
+    },
+    "data": {
+      "Axel": 0,
+      "Unknown": 0,
+      "data": 0
+    }
+  },
+  "cluster_to_action": {
+    "2": "data",
+    "3": "data",
+    "8": "data",
+    "4": "data",
+    "7": "data",
+    "5": "data",
+    "1": "data",
+    "6": "data",
+    "0": "data",
+    "9": "data"
+  },
+  "labels": [
+    "Axel",
+    "Unknown",
+    "data"
+  ],
+  "missing_cluster_count": 119,
+  "report": {
+    "labels": [
+      "Axel",
+      "Unknown",
+      "data"
+    ],
+    "per_class": {
+      "Axel": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "support": 286,
+        "tp": 0,
+        "fp": 0,
+        "fn": 286
+      },
+      "Unknown": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "support": 0,
+        "tp": 0,
+        "fp": 119,
+        "fn": 0
+      },
+      "data": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "support": 0,
+        "tp": 0,
+        "fp": 167,
+        "fn": 0
+      }
+    },
+    "macro_avg": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0
+    },
+    "weighted_avg": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0
+    }
+  },
+  "leaf_count": 291,
+  "n_clusters": 10
+}
