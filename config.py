@@ -17,31 +17,31 @@ from typing import Dict, Tuple
 DATA_SOURCE_TYPE: str = "npy"
 
 # FS-Jump3D 数据目录（NPY 格式）
-FS_JUMP3D_DATA_DIR: str = "c:/Users/86158/Desktop/数据集/FS-Jump3D-main/data/npy/Skater_A/Axel"
+FS_JUMP3D_DATA_DIR: str = "c:/Users/86158/Desktop/数据集/FS-Jump3D-main/data/npy/"
 
 # 标准骨骼比例（基于数据集平均值，以 Hip->Neck 总长度为 100.0 时的比例）
 # 格式: "parentIdx_childIdx": 比例值
 STANDARD_BONE_RATIOS: Dict[str, float] = {
-    '0_1': 0.163660, # hip -> rHip
-    '1_2': 0.875692, # rHip -> rKnee
-    '2_3': 0.762677, # rKnee -> rAnkle
-    '0_4': 0.163660, # hip -> lHip
-    '4_5': 0.875692, # lHip -> lKnee
-    '5_6': 0.762677, # lKnee -> lAnkle
-    '0_7': 0.447753, # hip -> spine
-    '7_8': 0.368799, # spine -> chest
-    '8_9': 0.183448, # chest -> neck
-    '9_10': 0.224500, # neck -> head
-    '8_11': 0.289900, # chest -> lShoulder
-    '11_12': 0.454658, # lShoulder -> lElbow
-    '12_13': 0.462239, # lElbow -> lWrist
-    '8_14': 0.289900, # chest -> rShoulder
-    '14_15': 0.454658, # rShoulder -> rElbow
-    '15_16': 0.462239, # rElbow -> rWrist
+    '0_1': 0.185711, # hip -> rHip
+    '1_2': 0.874799, # rHip -> rKnee
+    '2_3': 0.795995, # rKnee -> rAnkle
+    '0_4': 0.185711, # hip -> lHip
+    '4_5': 0.874799, # lHip -> lKnee
+    '5_6': 0.795995, # lKnee -> lAnkle
+    '0_7': 0.433722, # hip -> spine
+    '7_8': 0.357584, # spine -> chest
+    '8_9': 0.208694, # chest -> neck
+    '9_10': 0.244348, # neck -> head
+    '8_11': 0.297835, # chest -> lShoulder
+    '11_12': 0.490605, # lShoulder -> lElbow
+    '12_13': 0.470700, # lElbow -> lWrist
+    '8_14': 0.297835, # chest -> rShoulder
+    '14_15': 0.490605, # rShoulder -> rElbow
+    '15_16': 0.470700, # rElbow -> rWrist
 }
 
 # 归一化参考基准长度（将 Hip->Neck 总长度设定为此值）
-NORMALIZE_REFERENCE_LENGTH: float = 560.0
+NORMALIZE_REFERENCE_LENGTH: float = 510.6
 
 # ============================================================================
 # Human3.6M 17关节配置

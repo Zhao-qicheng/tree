@@ -89,7 +89,7 @@ def generate_frame_id(source_file: str, frame_index: int) -> str:
 
 def _load_frame_worker_npy(payload: tuple[int, str]) -> dict:
     """NPY 格式帧加载工作函数"""
-    from npy_loader import load_keypoints_from_npy, generate_frame_id_from_npy
+    from npy_loader import load_keypoints_from_npy, generate_frame_id_from_npy, normalize_skeleton
     
     frame_index, npy_file = payload
     try:
@@ -146,14 +146,10 @@ def _load_frame_worker_bvh(payload: tuple[int, str]) -> dict:
         aligned_keypoints = align_skeleton(keypoints_raw)
         
         # === 2. 执行骨架归一化 (Retargeting) ===
-        # 需要先转换为 numpy array
-        # 注意: 这里需要从 npy_loader 导入 normalize_skeleton，或者确保它可用
-        from npy_loader import normalize_skeleton
-        
         names = config.KEYPOINT_NAMES
         frame_array = np.array([aligned_keypoints[name] for name in names])
         
-        # 调用归一化
+        from npy_loader import normalize_skeleton
         normalized_array = normalize_skeleton(frame_array)
         
         # 转回 Dict

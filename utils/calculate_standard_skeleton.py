@@ -52,7 +52,7 @@ SYMMETRY_PAIRS = [
 def load_npy_files(data_dir):
     return glob.glob(os.path.join(data_dir, "**/*.npy"), recursive=True)
 
-def calculate_bone_lengths(data_dir, sample_size=2000):
+def calculate_bone_lengths(data_dir, sample_size=70000):
     files = load_npy_files(data_dir)
     print(f"找到 {len(files)} 个 NPY 文件")
     
@@ -97,6 +97,58 @@ def calculate_bone_lengths(data_dir, sample_size=2000):
     print(f"\n统计完成，共采样 {total_frames_processed} 帧。")
     return all_lengths
 
+def update_config_file(ratios, trunk_len):
+    """
+    自动更新 config.py 中的比例和参考长度
+    """
+    config_path = Path(__file__).parent.parent / "config.py"
+    if not config_path.exists():
+        print(f"警告：未找到 config.py 路径 {config_path}")
+        return
+
+    import re
+    with open(config_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    # 1. 更新 NORMALIZE_REFERENCE_LENGTH
+    # 匹配 NORMALIZE_REFERENCE_LENGTH: float = XXX.X
+    content = re.sub(
+        r"(NORMALIZE_REFERENCE_LENGTH:\s*float\s*=\s*)[\d\.]+",
+        rf"\g<1>{trunk_len:.1f}",
+        content
+    )
+
+    # 2. 更新 STANDARD_BONE_RATIOS
+    # 找到字典的起始位置
+    start_marker = "STANDARD_BONE_RATIOS: Dict[str, float] = {"
+    end_marker = "}"
+    
+    start_idx = content.find(start_marker)
+    if start_idx != -1:
+        # 寻找对应的结束括号
+        # 简单处理：假设字典内没有嵌套括号且以 } 独占行结束或紧跟分号
+        end_idx = content.find(end_marker, start_idx)
+        
+        # 重新生成字典字符串
+        new_dict_str = start_marker + "\n"
+        for key, ratio in ratios.items():
+            parent, child = map(int, key.split('_'))
+            name_p = config.KEYPOINT_NAMES[parent]
+            name_c = config.KEYPOINT_NAMES[child]
+            new_dict_str += f"    '{key}': {ratio:.6f}, # {name_p} -> {name_c}\n"
+        
+        # 拼接替换
+        before = content[:start_idx]
+        after = content[end_idx + 1:] # 跳过原本的 }
+        content = before + new_dict_str + "}" + after
+        
+    with open(config_path, "w", encoding="utf-8") as f:
+        f.write(content)
+    
+    print(f"\n✅ 已自动更新 {config_path}")
+    print(f"   - NORMALIZE_REFERENCE_LENGTH -> {trunk_len:.1f}")
+    print(f"   - STANDARD_BONE_RATIOS 已同步")
+
 def compute_ratios_and_print(all_lengths):
     # 1. 计算中位数长度
     median_lengths = {}
@@ -107,54 +159,40 @@ def compute_ratios_and_print(all_lengths):
             median_lengths[child] = 0.0
             
     # 2. 强制对称性 (取左右平均值)
-    # 先处理对称对
     for left, right in SYMMETRY_PAIRS:
-        # 对应的骨骼是 (parent_of_left -> left) 和 (parent_of_right -> right)
-        # 例如 LHip(4) 的父是 0, RHip(1) 的父是 0. 长度分别存储在 4 和 1 中
         l_len = median_lengths.get(left, 0)
         r_len = median_lengths.get(right, 0)
-        
         avg_len = (l_len + r_len) / 2.0
         median_lengths[left] = avg_len
         median_lengths[right] = avg_len
         
-    # 3. 计算躯干基准长度 (Hip -> Spine -> Chest -> Neck)
-    # 注意：config.py 中定义的基准是 Hip->Neck 总长度 = 100.0
-    # 路径是 0->7->8->9
+    # 3. 计算躯干基准长度
     trunk_len = median_lengths[7] + median_lengths[8] + median_lengths[9]
-    print(f"\n[基准] 躯干总长 (Hip->Spine->Chest->Neck): {trunk_len:.4f} (原始单位)")
+    print(f"\n[基准] 躯干总长 (Hip->Spine->Chest->Neck): {trunk_len:.4f}")
     
     if trunk_len < 1e-6:
-        print("错误：躯干长度过小，无法归一化。")
-        return
+        print("错误：躯干长度过小。")
+        return None, 0
 
     # 4. 生成比例字典
     ratios = {}
-    print("\n[结果] 标准骨骼比例 (STANDARD_BONE_RATIOS):")
-    print("-" * 40)
-    print("STANDARD_BONE_RATIOS: Dict[str, float] = {")
-    
-    # 按拓扑顺序打印，方便阅读
     sorted_children = sorted(H36M_TOPOLOGY.keys())
     
+    print("\n[计算结果预览]:")
     for child in sorted_children:
         parent = H36M_TOPOLOGY[child]
         key = f"{parent}_{child}"
         ratio = median_lengths[child] / trunk_len
         ratios[key] = ratio
+        print(f"    {key}: {ratio:.64f}")
         
-        # 添加注释说明骨骼名称
-        name_p = config.KEYPOINT_NAMES[parent]
-        name_c = config.KEYPOINT_NAMES[child]
-        print(f"    '{key}': {ratio:.6f}, # {name_p} -> {name_c}")
-        
-    print("}")
-    print("-" * 40)
+    return ratios, trunk_len
 
 def main():
     parser = argparse.ArgumentParser(description="计算数据集的标准骨骼比例")
     parser.add_argument("--data-dir", default=config.FS_JUMP3D_DATA_DIR, help="数据目录")
-    parser.add_argument("--sample-size", type=int, default=2000, help="采样帧数")
+    parser.add_argument("--sample-size", type=int, default=70000, help="采样帧数")
+    parser.add_argument("--auto-update", action="store_true", default=True, help="是否自动更新 config.py")
     
     args = parser.parse_args()
     
@@ -163,7 +201,10 @@ def main():
         return
         
     all_lengths = calculate_bone_lengths(args.data_dir, args.sample_size)
-    compute_ratios_and_print(all_lengths)
+    ratios, trunk_len = compute_ratios_and_print(all_lengths)
+    
+    if ratios and args.auto_update:
+        update_config_file(ratios, trunk_len)
 
 if __name__ == "__main__":
     main()
