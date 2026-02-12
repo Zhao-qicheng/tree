@@ -22,15 +22,26 @@ FS_JUMP3D_DATA_DIR: str = "c:/Users/86158/Desktop/数据集/FS-Jump3D-main/data/
 # 标准骨骼比例（基于数据集平均值，以 Hip->Neck 总长度为 100.0 时的比例）
 # 格式: "parentIdx_childIdx": 比例值
 STANDARD_BONE_RATIOS: Dict[str, float] = {
-    '0_7': 0.4380, '7_8': 0.3804, '8_9': 0.1816, '9_10': 0.2238,
-    '8_11': 0.2817, '11_12': 0.4463, '12_13': 0.4279,
-    '8_14': 0.2866, '14_15': 0.4498, '15_16': 0.4589,
-    '0_4': 0.1634, '4_5': 0.7955, '5_6': 0.7563,
-    '0_1': 0.1634, '1_2': 0.8356, '2_3': 0.7395,
+    '0_1': 0.163660, # hip -> rHip
+    '1_2': 0.875692, # rHip -> rKnee
+    '2_3': 0.762677, # rKnee -> rAnkle
+    '0_4': 0.163660, # hip -> lHip
+    '4_5': 0.875692, # lHip -> lKnee
+    '5_6': 0.762677, # lKnee -> lAnkle
+    '0_7': 0.447753, # hip -> spine
+    '7_8': 0.368799, # spine -> chest
+    '8_9': 0.183448, # chest -> neck
+    '9_10': 0.224500, # neck -> head
+    '8_11': 0.289900, # chest -> lShoulder
+    '11_12': 0.454658, # lShoulder -> lElbow
+    '12_13': 0.462239, # lElbow -> lWrist
+    '8_14': 0.289900, # chest -> rShoulder
+    '14_15': 0.454658, # rShoulder -> rElbow
+    '15_16': 0.462239, # rElbow -> rWrist
 }
 
 # 归一化参考基准长度（将 Hip->Neck 总长度设定为此值）
-NORMALIZE_REFERENCE_LENGTH: float = 100.0
+NORMALIZE_REFERENCE_LENGTH: float = 560.0
 
 # ============================================================================
 # Human3.6M 17关节配置

@@ -83,15 +83,20 @@ def clear_specific_npy_file(npy_file: str):
         del _npy_cache[npy_file]
 
 
-# Human3.6M 骨骼连接关系（父节点 -> 子节点）
-# 用于逐肢体归一化
-H36M_BONE_PAIRS = [
-    (0, 7), (7, 8), (8, 9), (9, 10),  # 躯干: Hip -> Spine -> Chest -> Neck -> Head
-    (8, 11), (11, 12), (12, 13),      # 左臂: Chest -> LShoulder -> LElbow -> LWrist
-    (8, 14), (14, 15), (15, 16),      # 右臂: Chest -> RShoulder -> RElbow -> RWrist
-    (0, 4), (4, 5), (5, 6),           # 左腿: Hip -> LHip -> LKnee -> LAnkle
-    (0, 1), (1, 2), (2, 3),           # 右腿: Hip -> RHip -> RKnee -> RAnkle
-]
+# Human3.6M 骨骼拓扑结构（子节点 -> 父节点）
+# 用于全量递归重定向
+H36M_TOPOLOGY = {
+    # 躯干
+    7: 0, 8: 7, 9: 8, 10: 9,
+    # 左腿
+    4: 0, 5: 4, 6: 5,
+    # 右腿
+    1: 0, 2: 1, 3: 2,
+    # 左臂
+    11: 8, 12: 11, 13: 12,
+    # 右臂
+    14: 8, 15: 14, 16: 15
+}
 
 
 def align_orientation(frame: np.ndarray) -> np.ndarray:
@@ -143,44 +148,78 @@ def align_orientation(frame: np.ndarray) -> np.ndarray:
 
 def normalize_skeleton(frame: np.ndarray) -> np.ndarray:
     """
-    标准模板重定向归一化 (Standard Skeleton Retargeting)：
-    保持每个关节的方向向量（动作姿态）不变，但将骨骼长度替换为数据集的平均比例。
+    标准骨架重定向 (Standard Skeleton Retargeting)：
+    
+    使用向量法递归重构骨架。
+    1. 根节点 (Hip, 0) 置于原点。
+    2. 对于每个子节点，保持其相对于父节点的原始方向向量。
+    3. 将方向向量乘以标准长度 (Standard Length)，得到新位置。
+    
+    公式：P_child_new = P_parent_new + Normalize(P_child_old - P_parent_old) * L_standard
     
     优点：
-    1. 完全消除了不同运动员的肢体比例差异（长腿、短臂等体型差）。
-    2. 保留了动作的原始形态（角度信息）。
-    3. 避免了“每段骨骼设为1.0”导致的视觉畸变，骨架看起来符合人体比例。
+    - 完全保留动作的角度信息。
+    - 强制所有骨骼长度符合标准比例。
+    - 解决了不同身高/体型用户的动作在空间中不重合的问题。
     
     参数:
-        frame: 形状为 (17, 3) 的单帧数据（已中心化，Hip在原点）
+        frame: 形状为 (17, 3) 的原始帧数据
     
     返回:
-        重定向归一化后的帧数据，尺度基于 config.NORMALIZE_REFERENCE_LENGTH
+        重定向后的帧数据 (17, 3)
     """
     base_len = getattr(config, 'NORMALIZE_REFERENCE_LENGTH', 100.0)
     ratios = getattr(config, 'STANDARD_BONE_RATIOS', {})
     
     new_frame = np.zeros_like(frame)
-    # Hip (索引0) 分支起点
+    # 1. 根节点归零
+    # 注意：这里的 frame 假设已经是中心化甚至旋转对齐过的，但为了保险，
+    # 我们再次强制将新骨架的 Hip 置于 0,0,0
     new_frame[0] = [0, 0, 0]
     
-    # 获取骨骼连接对（父节点 -> 子节点）
-    for parent_idx, child_idx in H36M_BONE_PAIRS:
-        # 1. 获取该骨段的原始方向向量
-        direction = frame[child_idx] - frame[parent_idx]
-        norm = np.linalg.norm(direction)
+    # 2. 按照拓扑顺序计算 (确保父节点先被计算)
+    # H36M 的索引顺序恰好大部分是父在子前，但为了严谨，我们显式从浅到深处理
+    # 0 (Hip) 已处理
+    # 第一层: 1, 4, 7
+    # 第二层: 2, 5, 8
+    # ...
+    # 简单的做法是按索引排序处理，因为 H36M 索引大致符合层级，
+    # 但严格来说应该用 BFS/DFS。考虑到 H36M 索引固定：
+    # 0->1, 0->4, 0->7 是第一级。
+    # 1->2, 4->5, 7->8 是第二级。
+    # 8->9, 8->11, 8->14, 2->3, 5->6 是第三级。
+    # ...
+    # 为了简单且正确，我们定义一个处理顺序列表
+    
+    processing_order = [
+         1, 4, 7,      # Level 1
+         2, 5, 8,      # Level 2
+         3, 6, 9, 11, 14, # Level 3
+         10, 12, 15,   # Level 4
+         13, 16        # Level 5
+    ]
+    
+    for child_idx in processing_order:
+        parent_idx = H36M_TOPOLOGY[child_idx]
+        
+        # 获取原始方向向量
+        raw_vec = frame[child_idx] - frame[parent_idx]
+        norm = np.linalg.norm(raw_vec)
         
         if norm < 1e-6:
+            # 如果原始骨骼长度为0（重叠），则新骨骼也设为父节点位置
             new_frame[child_idx] = new_frame[parent_idx]
         else:
-            # 2. 获取该骨段的标准长度
-            key = f"{parent_idx}_{child_idx}"
-            std_ratio = ratios.get(key, 1.0)
-            std_length = std_ratio * base_len
+            # 归一化方向
+            unit_vec = raw_vec / norm
             
-            # 3. 在新骨架上重建节点坐标：父节点位置 + (单位方向向量 * 标准长度)
-            unit_vector = direction / norm
-            new_frame[child_idx] = new_frame[parent_idx] + unit_vector * std_length
+            # 获取标准长度
+            key = f"{parent_idx}_{child_idx}"
+            ratio = ratios.get(key, 0.0) # 如果没找到比例，默认长度为0（还是有问题，应报错或给默认值）
+            std_len = ratio * base_len
+            
+            # 计算新位置
+            new_frame[child_idx] = new_frame[parent_idx] + unit_vec * std_len
             
     return new_frame
 

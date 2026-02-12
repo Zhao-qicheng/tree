@@ -95,23 +95,34 @@ def _load_frame_worker_npy(payload: tuple[int, str]) -> dict:
     try:
         keypoints_raw = load_keypoints_from_npy(frame_index, npy_file)
         
-        # === 执行旋转对齐 ===
-        # aligned_keypoints 已经是中心化并旋转对齐后的结果
+        # === 1. 执行旋转对齐 ===
+        # aligned_keypoints 已经是中心化并旋转对齐后的结果 (Dict)
         aligned_keypoints = align_skeleton(keypoints_raw)
+
+        # === 2. 执行骨架归一化 (Retargeting) ===
+        # 需要先转换为 numpy array
+        names = config.KEYPOINT_NAMES
+        frame_array = np.array([aligned_keypoints[name] for name in names])
+        
+        # 调用归一化
+        normalized_array = normalize_skeleton(frame_array)
+        
+        # 转回 Dict
+        final_keypoints = {name: normalized_array[i] for i, name in enumerate(names)}
         
         frame_id = generate_frame_id_from_npy(npy_file, frame_index)
         
-        # 注意：这里我们使用对齐后的数据进行后续存储和训练
+        # 注意：这里我们使用归一化后的数据进行后续存储和训练
         rounded_keypoints = {
             name: np.round(pos, config.JSON_FLOAT_PRECISION)
-            for name, pos in aligned_keypoints.items()
+            for name, pos in final_keypoints.items()
         }
         return {
             "success": True,
             "frame_index": frame_index,
             "source_file": npy_file,
             "frame_id": frame_id,
-            "keypoints": aligned_keypoints, # 使用对齐后的数据
+            "keypoints": final_keypoints, # 使用归一化后的数据
             "rounded_keypoints": rounded_keypoints,
         }
     except Exception as exc:
@@ -129,18 +140,36 @@ def _load_frame_worker_bvh(payload: tuple[int, str]) -> dict:
     
     frame_index, bvh_file = payload
     try:
-        keypoints = load_keypoints_from_bvh(frame_index, bvh_file)
+        keypoints_raw = load_keypoints_from_bvh(frame_index, bvh_file)
+        
+        # === 1. 执行旋转对齐 (BVH 之前竟然漏了这一步) ===
+        aligned_keypoints = align_skeleton(keypoints_raw)
+        
+        # === 2. 执行骨架归一化 (Retargeting) ===
+        # 需要先转换为 numpy array
+        # 注意: 这里需要从 npy_loader 导入 normalize_skeleton，或者确保它可用
+        from npy_loader import normalize_skeleton
+        
+        names = config.KEYPOINT_NAMES
+        frame_array = np.array([aligned_keypoints[name] for name in names])
+        
+        # 调用归一化
+        normalized_array = normalize_skeleton(frame_array)
+        
+        # 转回 Dict
+        final_keypoints = {name: normalized_array[i] for i, name in enumerate(names)}
+        
         frame_id = generate_frame_id(bvh_file, frame_index)
         rounded_keypoints = {
             name: np.round(pos, config.JSON_FLOAT_PRECISION)
-            for name, pos in keypoints.items()
+            for name, pos in final_keypoints.items()
         }
         return {
             "success": True,
             "frame_index": frame_index,
             "source_file": bvh_file,
             "frame_id": frame_id,
-            "keypoints": keypoints,
+            "keypoints": final_keypoints,
             "rounded_keypoints": rounded_keypoints,
         }
     except Exception as exc:

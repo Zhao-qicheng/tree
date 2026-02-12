@@ -164,6 +164,32 @@ def find_candidate_frames_from_tree(tree: FlatOctree,
     return candidate_frame_ids
 
 
+def _normalize_query_input(keypoints: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    """
+    对查询输入进行标准化处理：
+    1. 旋转对齐 (Align Orientation)
+    2. 骨架重定向 (Skeleton Retargeting)
+    """
+    from npy_loader import align_orientation, normalize_skeleton
+    
+    # Dict -> Array
+    names = config.KEYPOINT_NAMES
+    try:
+        frame_array = np.array([keypoints[name] for name in names]) # (17, 3)
+    except KeyError as e:
+        print(f"Warning: Query keypoints missing joint {e}, skipping normalization.")
+        return keypoints
+
+    # 1. Align
+    aligned_array = align_orientation(frame_array)
+    
+    # 2. Normalize
+    normalized_array = normalize_skeleton(aligned_array)
+    
+    # Array -> Dict
+    return {name: normalized_array[i] for i, name in enumerate(names)}
+
+
 def merge_candidates(all_candidates: Dict[int, List[str]],
                     strategy: str = None,
                     min_vote_threshold: int = None,
@@ -352,6 +378,9 @@ def query_frame(query_keypoints: dict[str, np.ndarray],
     """执行帧检索查询"""
     if top_k is None:
         top_k = config.TOP_K
+        
+    # [NEW] 对输入帧进行标准化 (重定向)
+    query_keypoints_norm = _normalize_query_input(query_keypoints)
     
     # 0. 加载模型（如果没传实例）
     if tree_instance is None:
@@ -360,14 +389,14 @@ def query_frame(query_keypoints: dict[str, np.ndarray],
         tree = tree_instance
         metadata_list = metadata_instance
 
-    # 1. 查找查询帧所属节点并获取标签
-    leaf_idx = get_node_index_for_query(tree, query_keypoints)
+    # 1. 查找查询帧所属节点并获取标签 (使用归一化后的数据)
+    leaf_idx = get_node_index_for_query(tree, query_keypoints_norm)
     labels = _load_leaf_labels()
     action_name = labels.get(str(leaf_idx))
 
-    # 2. 执行检索
+    # 2. 执行检索 (使用归一化后的数据)
     results, candidate_ids, load_elapsed, tree_elapsed, sim_elapsed = query_single_tree(
-        query_keypoints=query_keypoints,
+        query_keypoints=query_keypoints_norm,
         model_tree_path=model_tree_path,
         model_metadata_path=model_metadata_path,
         rotation_config=None,
@@ -382,7 +411,7 @@ def query_frame(query_keypoints: dict[str, np.ndarray],
     
     if verbose:
         print("=" * 80)
-        print("帧检索查询系统（关节对分组八叉树 + 旋转增强）")
+        print("帧检索查询系统（关节对分组八叉树 + 旋转增强 + 骨架重定向）")
         print("=" * 80)
         
         # 输出动作分类信息
@@ -398,6 +427,7 @@ def query_frame(query_keypoints: dict[str, np.ndarray],
         print(f"  精确计算用时: {sim_elapsed:.4f} 秒")
         print(f"  总查询用时: {tree_elapsed + sim_elapsed:.4f} 秒\n")
         print(f"Top-{top_k}最相似的帧:")
+    
         print("-" * 80)
         for i, result in enumerate(results, 1):
             print_result(result, i)
@@ -417,14 +447,17 @@ def find_frames_in_same_node(query_keypoints: dict[str, np.ndarray],
     """
     找到与查询帧处于同一个八叉树叶子节点的所有帧。
     """
+    # [NEW] 对输入帧进行标准化
+    query_keypoints_norm = _normalize_query_input(query_keypoints)
+    
     # 1. 加载模型
     if tree_instance is not None:
         tree = tree_instance
     else:
         tree, _, _ = _load_model_once(model_tree_path, model_metadata_path, use_cache=use_cache, show_progress=False)
     
-    # 2. 沿着树向下走到底
-    current_node = get_node_index_for_query(tree, query_keypoints)
+    # 2. 沿着树向下走到底 (使用归一化后的数据)
+    current_node = get_node_index_for_query(tree, query_keypoints_norm)
             
     # 3. 获取该节点的所有帧
     frame_ids = list(tree.get_frame_ids(current_node))
