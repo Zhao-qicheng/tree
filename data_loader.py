@@ -10,10 +10,6 @@ import glob
 
 import numpy as np
 
-import sys
-
-# 添加data目录到路径
-sys.path.insert(0, str(Path(__file__).parent / "data_train"))
 from data_frame import get_joint_position, get_frame_count
 
 import config

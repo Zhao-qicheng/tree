@@ -1,22 +1,27 @@
 .cursor
 .idea
 
+# Python 字节码
+*.pyc
+__pycache__/
+*.pyo
 
-# 忽略生成的参数文件
-*.pkl
-*.tree
-*.npz
-*.bvh
-*.csv
+# 训练生成的模型文件（体积大）
+models/
 
+# 数据集目录（不纳入版本控制）
+data/npy/
+data/json/
 data_test/
 data_train/
 big_data/
 
+# 输出文件
+output/
 
+# 文档（可选忽略）
+# *.md
 
-
-*.pyc
-__pycache__/
-*.md
-/data
+# 旧格式文件
+*.bvh
+*.tree

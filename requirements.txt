@@ -1,1 +1,24 @@
+# 八叉树帧检索系统 - 依赖列表
+# 安装命令: pip install -r requirements.txt
+
+# 核心数值计算
+numpy
+
+# 机器学习 (用于 action_space_explorer.py 的 PCA / t-SNE / K-Means)
+scikit-learn
+
+# Web 可视化框架
+dash
+plotly
+
+# 数据处理
+pandas
+
+# BVH 格式解析 (data_loader / data_frame)
+bvh-python
+
+# 进度显示
 tqdm
+
+# 系统资源监控 (训练时内存监控，可选)
+psutil

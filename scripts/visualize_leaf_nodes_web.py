@@ -1,3 +1,4 @@
+import sys
 import os
 import json
 import pickle
@@ -8,6 +9,9 @@ from dash import dcc, html, Input, Output, State, dash_table
 import pandas as pd
 from pathlib import Path
 
+# 添加项目根目录到系统路径
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import config
 from flat_octree import FlatOctree
 from data_structures import FrameMetadata
@@ -17,9 +21,9 @@ from utils.visualize_npy import H36M_CONNECTIONS, get_pose_objects
 # 1. 数据加载与预处理
 # =============================================================================
 
-DEFAULT_TREE = "model.npz"
-DEFAULT_METADATA = "model.pkl"
-DEFAULT_LABELS = "leaf_labels.json"
+DEFAULT_TREE = "models/model.npz"
+DEFAULT_METADATA = "models/model.pkl"
+DEFAULT_LABELS = "data/leaf_labels.json"
 
 def load_data():
     """集中加载所有必要的数据"""

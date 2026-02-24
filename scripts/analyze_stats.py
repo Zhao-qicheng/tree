@@ -1,7 +1,11 @@
 import os
+import sys
 import numpy as np
 from pathlib import Path
 import glob
+
+# 添加项目根目录到系统路径
+sys.path.append(str(Path(__file__).parent.parent))
 
 # Human3.6M 骨骼连接关系（父节点 -> 子节点）
 H36M_BONE_PAIRS = [

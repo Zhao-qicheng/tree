@@ -162,7 +162,7 @@ def load_and_process_data(root_dir='./data/npy/Skater_A/Axel/Axel_1.npy'):
 
 # --- 2. 缓存管理 ---
 # 为了避免每次启动都耗费几分钟计算 t-SNE，我们将结果缓存到本地 CSV
-CACHE_FILE = 'action_space_cache.csv'
+CACHE_FILE = 'output/action_space_cache.csv'
 if os.path.exists(CACHE_FILE):
     print(f"检测到缓存文件 {CACHE_FILE}，正在快速加载...")
     df = pd.read_csv(CACHE_FILE)
@@ -318,7 +318,7 @@ def save_clustering_result(n_clicks, k):
     labels = kmeans.fit_predict(current_coords)
     
     # 2. 准备导出目录
-    export_dir = "结果导出"
+    export_dir = "output/结果导出"
     if not os.path.exists(export_dir):
         os.makedirs(export_dir)
     
