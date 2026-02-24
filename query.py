@@ -315,7 +315,7 @@ def query_single_tree(query_keypoints: dict[str, np.ndarray],
     return results, candidate_frame_ids, load_elapsed, tree_search_elapsed, similarity_elapsed
 
 
-def _load_leaf_labels(label_path: str = "leaf_labels.json") -> dict:
+def _load_leaf_labels(label_path: str = "data/leaf_labels.json") -> dict:
     """加载叶节点动作标签"""
     if os.path.exists(label_path):
         try:
@@ -365,8 +365,8 @@ def get_node_index_for_query(tree: FlatOctree, query_keypoints: dict[str, np.nda
 
 
 def query_frame(query_keypoints: dict[str, np.ndarray],
-               model_tree_path: str = "model.npz",
-               model_metadata_path: str = "model.pkl",
+               model_tree_path: str = "models/model.npz",
+               model_metadata_path: str = "models/model.pkl",
                top_k: int = None,
                verbose: bool = True,
                *,
@@ -437,8 +437,8 @@ def query_frame(query_keypoints: dict[str, np.ndarray],
 
 
 def find_frames_in_same_node(query_keypoints: dict[str, np.ndarray],
-                             model_tree_path: str = "model.npz",
-                             model_metadata_path: str = "model.pkl",
+                             model_tree_path: str = "models/model.npz",
+                             model_metadata_path: str = "models/model.pkl",
                              verbose: bool = True,
                              *,
                              tree_instance: Optional[FlatOctree] = None,
@@ -480,8 +480,8 @@ def find_frames_in_same_node(query_keypoints: dict[str, np.ndarray],
 
 def query_same_node_frames_from_npy(npy_file: str,
                                    frame_index: int,
-                                   model_tree_path: str = "model.npz",
-                                   model_metadata_path: str = "model.pkl",
+                                   model_tree_path: str = "models/model.npz",
+                                   model_metadata_path: str = "models/model.pkl",
                                    verbose: bool = True,
                                    *,
                                    tree_instance: Optional[FlatOctree] = None,
@@ -501,8 +501,8 @@ def query_same_node_frames_from_npy(npy_file: str,
 
 def query_same_node_frames_from_bvh(bvh_file: str,
                                    frame_index: int,
-                                   model_tree_path: str = "model.npz",
-                                   model_metadata_path: str = "model.pkl",
+                                   model_tree_path: str = "models/model.npz",
+                                   model_metadata_path: str = "models/model.pkl",
                                    verbose: bool = True,
                                    *,
                                    tree_instance: Optional[FlatOctree] = None,
@@ -534,8 +534,8 @@ def print_result(result: SimilarityResult, rank: int) -> None:
 
 def query_from_bvh(bvh_file: str,
                   frame_index: int,
-                  model_tree_path: str = "model.npz",
-                  model_metadata_path: str = "model.pkl",
+                  model_tree_path: str = "models/model.npz",
+                  model_metadata_path: str = "models/model.pkl",
                   top_k: int = None,
                   verbose: bool = True,
                   *,
@@ -568,8 +568,8 @@ def query_from_bvh(bvh_file: str,
 
 def query_from_npy(npy_file: str,
                    frame_index: int,
-                   model_tree_path: str = "model.npz",
-                   model_metadata_path: str = "model.pkl",
+                   model_tree_path: str = "models/model.npz",
+                   model_metadata_path: str = "models/model.pkl",
                    top_k: int = None,
                    verbose: bool = True,
                    *,
@@ -687,8 +687,8 @@ def main():
     parser.add_argument("--bvh-file", help="BVH文件路径")
     parser.add_argument("--npy-file", help="NPY文件路径（Human3.6M格式）")
     parser.add_argument("--frame-index", type=int, help="帧索引")
-    parser.add_argument("--model-tree", default="model.npz", help="树模型文件路径")
-    parser.add_argument("--model-metadata", default="model.pkl", help="元数据文件路径")
+    parser.add_argument("--model-tree", default="models/model.npz", help="树模型文件路径")
+    parser.add_argument("--model-metadata", default="models/model.pkl", help="元数据文件路径")
     parser.add_argument("--top-k", type=int, default=None, help="返回前K个结果")
     parser.add_argument("--quiet", action="store_true", help="静默模式")
     parser.add_argument("--interactive", action="store_true", help="交互式模式")

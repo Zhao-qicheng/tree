@@ -396,12 +396,15 @@ def train_single_tree(data_dir: str,
 
 
 def train_model(data_dir: str = None, 
-                model_tree_path: str = "model.npz",
-                model_metadata_path: str = "model.pkl",
+                model_tree_path: str = "models/model.npz",
+                model_metadata_path: str = "models/model.pkl",
                 verbose: bool = True,
                 num_workers: Optional[int] = None,
                 data_source_type: str = None) -> None:
     """训练模型主入口"""
+    # 自动创建输出目录
+    Path(model_tree_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(model_metadata_path).parent.mkdir(parents=True, exist_ok=True)
     if data_dir is None:
         if config.DATA_SOURCE_TYPE == "npy":
             data_dir = config.FS_JUMP3D_DATA_DIR
@@ -498,8 +501,8 @@ def main():
     
     parser = argparse.ArgumentParser(description="训练帧检索模型")
     parser.add_argument("--data-dir", default=None, help="数据目录路径")
-    parser.add_argument("--output-tree", default="model.npz", help="输出树文件路径")
-    parser.add_argument("--output-metadata", default="model.pkl", help="输出元数据文件路径")
+    parser.add_argument("--output-tree", default="models/model.npz", help="输出树文件路径")
+    parser.add_argument("--output-metadata", default="models/model.pkl", help="输出元数据文件路径")
     parser.add_argument("--quiet", action="store_true", help="静默模式")
     parser.add_argument("--workers", type=int, default=None, help="并行加载进程数")
     parser.add_argument("--source-type", choices=["bvh", "npy"], default=None, 
