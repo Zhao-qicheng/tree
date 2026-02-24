@@ -8,6 +8,8 @@ __pycache__/
 
 # 训练生成的模型文件（体积大）
 models/
+*.npz
+*.pkl
 
 # 数据集目录（不纳入版本控制）
 data/npy/
