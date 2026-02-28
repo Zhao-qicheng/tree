@@ -257,6 +257,10 @@ def update_pose_display(current_idx, selected_rows, table_data):
     
     pose = align_skeleton(pose_raw)
     
+    # 骨架大小归一化
+    from npy_loader import normalize_skeleton
+    pose = normalize_skeleton(pose)
+    
     # 确定八叉树决策点的索引
     active_joints = set()
     for pair in config.JOINT_PAIRS:
