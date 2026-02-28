@@ -407,7 +407,8 @@ def train_model(data_dir: str = None,
     Path(model_metadata_path).parent.mkdir(parents=True, exist_ok=True)
     if data_dir is None:
         if config.DATA_SOURCE_TYPE == "npy":
-            data_dir = config.FS_JUMP3D_DATA_DIR
+            # 使用训练集目录作为默认值
+            data_dir = getattr(config, "TRAIN_DATA_DIR", config.FS_JUMP3D_DATA_DIR)
         else:
             data_dir = "data_train/"
     

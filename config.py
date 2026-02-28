@@ -16,8 +16,12 @@ from typing import Dict, Tuple
 # 数据源类型："bvh" 或 "npy"
 DATA_SOURCE_TYPE: str = "npy"
 
-# FS-Jump3D 数据目录（NPY 格式）
-FS_JUMP3D_DATA_DIR: str = "c:/Users/86158/Desktop/数据集/FS-Jump3D-main/data/npy/Skater_A/Axel"
+# FS-Jump3D 数据目录（NPY 格式，原始完整数据）
+FS_JUMP3D_DATA_DIR: str = "c:/Users/86158/Desktop/八叉树/data/npy"
+
+# 划分后的训练集与测试集目录（由 split_dataset.py 生成）
+TRAIN_DATA_DIR: str = "c:/Users/86158/Desktop/八叉树/data/npy_train"
+TEST_DATA_DIR: str = "c:/Users/86158/Desktop/八叉树/data/npy_test"
 
 # 标准骨骼比例（基于数据集平均值，以 Hip->Neck 总长度为 100.0 时的比例）
 # 格式: "parentIdx_childIdx": 比例值
