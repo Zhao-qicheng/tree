@@ -1,5 +1,9 @@
+import sys
 import os
 import json
+
+# 将项目根目录加入 sys.path，确保脚本在 scripts/ 子目录下运行时也能正常 import
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import dash
 from dash import html, dcc, Input, Output, State, ALL
 import plotly.graph_objects as go
@@ -26,11 +30,18 @@ fallback_records = []
 def load_data():
     global tree, metadata_list, fallback_records
     if tree is None:
-        tree, metadata_list, _ = _load_model_once("models/model.npz", "models/model.pkl", show_progress=False)
+        # 路径相对于项目根目录
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        tree, metadata_list, _ = _load_model_once(
+            os.path.join(root, "models/model.npz"),
+            os.path.join(root, "models/model.pkl"),
+            show_progress=False
+        )
     
     if not fallback_records:
         try:
-            with open("output/fallback_records.json", 'r', encoding='utf-8') as f:
+            root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            with open(os.path.join(root, "output/fallback_records.json"), 'r', encoding='utf-8') as f:
                 fallback_records = json.load(f)
         except FileNotFoundError:
             print("找不到 fallback_records.json。请先运行 evaluate.py")
