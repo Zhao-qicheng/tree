@@ -28,3 +28,7 @@ output/
 # 旧格式文件
 *.bvh
 *.tree
+
+# 本地路径配置（每人自行创建，不提交到 git）
+.env
+# .env.example 是模板，保留在 git 中

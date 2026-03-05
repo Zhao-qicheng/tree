@@ -7,7 +7,42 @@
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import Dict, Tuple
+
+# ============================================================================
+# 路径解析辅助：自动推导项目根目录，支持 .env 文件覆盖
+# ============================================================================
+# 项目根目录 = config.py 所在目录
+_PROJECT_ROOT = Path(__file__).resolve().parent
+
+def _load_dotenv(env_path: Path) -> None:
+    """极简 .env 解析，无需安装 python-dotenv。
+    只处理 KEY=VALUE 格式，忽略注释行和空行。"""
+    if not env_path.exists():
+        return
+    with open(env_path, encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#') or '=' not in line:
+                continue
+            key, _, value = line.partition('=')
+            key = key.strip()
+            value = value.strip().strip('"\'')
+            # 仅在未被系统环境变量覆盖时才设置
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+# 加载 .env 文件（项目根目录下，不提交到 git）
+_load_dotenv(_PROJECT_ROOT / '.env')
+
+def _path(env_key: str, default_relative: str) -> str:
+    """从环境变量读取路径，若未设置则使用项目根目录的相对路径作为默认值。"""
+    val = os.environ.get(env_key, '')
+    if val:
+        return val
+    return str(_PROJECT_ROOT / default_relative)
 
 # ============================================================================
 # 数据源配置
@@ -17,11 +52,12 @@ from typing import Dict, Tuple
 DATA_SOURCE_TYPE: str = "npy"
 
 # FS-Jump3D 数据目录（NPY 格式，原始完整数据）
-FS_JUMP3D_DATA_DIR: str = "c:/Users/86158/Desktop/八叉树/data/npy"
+# 优先读取环境变量 FS_JUMP3D_DATA_DIR，默认为项目内 data/npy
+FS_JUMP3D_DATA_DIR: str = _path('FS_JUMP3D_DATA_DIR', 'data/npy')
 
 # 划分后的训练集与测试集目录（由 split_dataset.py 生成）
-TRAIN_DATA_DIR: str = "c:/Users/86158/Desktop/八叉树/data/npy_train"
-TEST_DATA_DIR: str = "c:/Users/86158/Desktop/八叉树/data/npy_test"
+TRAIN_DATA_DIR: str = _path('TRAIN_DATA_DIR', 'data/npy_train')
+TEST_DATA_DIR: str  = _path('TEST_DATA_DIR',  'data/npy_test')
 
 # 标准骨骼比例（基于数据集平均值，以 Hip->Neck 总长度为 100.0 时的比例）
 # 格式: "parentIdx_childIdx": 比例值
