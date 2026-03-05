@@ -141,7 +141,7 @@ JOINT_PAIRS = (
 
 # 每组关节对的迭代深度 n
 # 前 n 层使用第一组，n+1 到 2n 层使用第二组，以此类推
-PAIR_ITERATION_DEPTH: int = 1
+PAIR_ITERATION_DEPTH: int = 2
 
 # 八叉树相关配置
 # 动态计算最大深度
@@ -221,3 +221,12 @@ MIN_VOTE_THRESHOLD: int = 2
 # 多树训练/查询并行
 PARALLEL_TRAIN_TREES: bool = True
 PARALLEL_QUERY_TREES: bool = True
+
+# ============================================================================
+# 消融实验配置 (Ablation Study)
+# ============================================================================
+# 启用/禁用 旋转对齐 (训练和推理查询阶段同步生效)
+ENABLE_ALIGN: bool = False
+
+# 启用/禁用 骨架归一化/重定向 (训练和推理查询阶段同步生效)
+ENABLE_NORMALIZE: bool = False

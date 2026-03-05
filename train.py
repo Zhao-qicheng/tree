@@ -97,7 +97,10 @@ def _load_frame_worker_npy(payload: tuple[int, str]) -> dict:
         
         # === 1. 执行旋转对齐 ===
         # aligned_keypoints 已经是中心化并旋转对齐后的结果 (Dict)
-        aligned_keypoints = align_skeleton(keypoints_raw)
+        if getattr(config, "ENABLE_ALIGN", True):
+            aligned_keypoints = align_skeleton(keypoints_raw)
+        else:
+            aligned_keypoints = keypoints_raw
 
         # === 2. 执行骨架归一化 (Retargeting) ===
         # 需要先转换为 numpy array
@@ -105,7 +108,10 @@ def _load_frame_worker_npy(payload: tuple[int, str]) -> dict:
         frame_array = np.array([aligned_keypoints[name] for name in names])
         
         # 调用归一化
-        normalized_array = normalize_skeleton(frame_array)
+        if getattr(config, "ENABLE_NORMALIZE", True):
+            normalized_array = normalize_skeleton(frame_array)
+        else:
+            normalized_array = frame_array
         
         # 转回 Dict
         final_keypoints = {name: normalized_array[i] for i, name in enumerate(names)}
@@ -143,14 +149,20 @@ def _load_frame_worker_bvh(payload: tuple[int, str]) -> dict:
         keypoints_raw = load_keypoints_from_bvh(frame_index, bvh_file)
         
         # === 1. 执行旋转对齐 (BVH 之前竟然漏了这一步) ===
-        aligned_keypoints = align_skeleton(keypoints_raw)
+        if getattr(config, "ENABLE_ALIGN", True):
+            aligned_keypoints = align_skeleton(keypoints_raw)
+        else:
+            aligned_keypoints = keypoints_raw
         
         # === 2. 执行骨架归一化 (Retargeting) ===
         names = config.KEYPOINT_NAMES
         frame_array = np.array([aligned_keypoints[name] for name in names])
         
         from npy_loader import normalize_skeleton
-        normalized_array = normalize_skeleton(frame_array)
+        if getattr(config, "ENABLE_NORMALIZE", True):
+            normalized_array = normalize_skeleton(frame_array)
+        else:
+            normalized_array = frame_array
         
         # 转回 Dict
         final_keypoints = {name: normalized_array[i] for i, name in enumerate(names)}

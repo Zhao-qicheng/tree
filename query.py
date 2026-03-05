@@ -181,10 +181,16 @@ def _normalize_query_input(keypoints: dict[str, np.ndarray]) -> dict[str, np.nda
         return keypoints
 
     # 1. Align
-    aligned_array = align_orientation(frame_array)
+    if getattr(config, "ENABLE_ALIGN", True):
+        aligned_array = align_orientation(frame_array)
+    else:
+        aligned_array = frame_array
     
     # 2. Normalize
-    normalized_array = normalize_skeleton(aligned_array)
+    if getattr(config, "ENABLE_NORMALIZE", True):
+        normalized_array = normalize_skeleton(aligned_array)
+    else:
+        normalized_array = aligned_array
     
     # Array -> Dict
     return {name: normalized_array[i] for i, name in enumerate(names)}
