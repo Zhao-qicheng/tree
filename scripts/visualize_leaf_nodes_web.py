@@ -33,7 +33,20 @@ def load_data():
     print(f"正在加载元数据: {DEFAULT_METADATA}")
     with open(DEFAULT_METADATA, 'rb') as f:
         metadata_list = pickle.load(f)
+    
+    # 主映射：完整 frame_id -> metadata
     metadata_map = {m.frame_id: m for m in metadata_list}
+    
+    # 副映射：截断到32字符的前缀 -> [metadata列表]
+    # 用于兼容旧模型中 frame_id 被 U32 dtype 截断的情况
+    metadata_prefix_map: dict = {}
+    for m in metadata_list:
+        prefix = m.frame_id[:32]
+        if prefix not in metadata_prefix_map:
+            metadata_prefix_map[prefix] = []
+        metadata_prefix_map[prefix].append(m)
+    
+    print(f"元数据加载完成: {len(metadata_list)} 条目")
     
     # 获取叶节点并统计
     leaf_indices = []
@@ -73,10 +86,10 @@ def load_data():
         })
     
     df = pd.DataFrame(table_data).sort_values(by="count", ascending=False)
-    return tree, metadata_map, df
+    return tree, metadata_map, metadata_prefix_map, df
 
 # 全局变量
-TREE, METADATA_MAP, LEAF_DF = load_data()
+TREE, METADATA_MAP, METADATA_PREFIX_MAP, LEAF_DF = load_data()
 
 # =============================================================================
 # 2. Dash 应用布局
@@ -220,10 +233,24 @@ def update_pose_display(current_idx, selected_rows, table_data):
 
     # 仅加载当前帧
     target_fid = frame_ids[current_idx]
-    if target_fid not in METADATA_MAP:
-        return go.Figure(), f"Leaf #{leaf_idx} (数据缺失: {target_fid})", "", f"{current_idx+1} / {num_frames}"
-        
-    m = METADATA_MAP[target_fid]
+    target_fid_str = str(target_fid)
+    
+    # === 三级回退查找逻辑 ===
+    # 级别1：完整 frame_id 精确匹配（新模型，dtype=object）
+    m = METADATA_MAP.get(target_fid_str)
+    
+    # 级别2：前缀匹配（兼容旧模型 dtype='U32' 导致 frame_id 被截断至32字符）
+    if m is None:
+        prefix_key = target_fid_str[:32]
+        candidates = METADATA_PREFIX_MAP.get(prefix_key)
+        if candidates:
+            # 按 frame_index 升序排列，按相对位置选帧，尽量保持播放连续性
+            candidates_sorted = sorted(candidates, key=lambda x: x.frame_index)
+            m = candidates_sorted[current_idx % len(candidates_sorted)]
+    
+    if m is None:
+        return go.Figure(), f"Leaf #{leaf_idx} (数据缺失: {target_fid_str})", "", f"{current_idx+1} / {num_frames}"
+
     
     # 从原始 NPY 文件加载数据，保证 17 点完整性
     try:

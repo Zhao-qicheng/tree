@@ -160,7 +160,7 @@ def build_flat_tree(root: _BuilderNode) -> FlatOctree:
     # 帧ID 数组
     total_frames = sum(len(n.frame_ids) for n in nodes)
     flat.frame_ids_start = np.zeros(num_nodes + 1, dtype=np.int32)
-    flat.frame_ids_data = np.empty(total_frames, dtype='U32')
+    flat.frame_ids_data = np.empty(total_frames, dtype=object)
     
     # 3. 填充数据
     child_ptr = 0
