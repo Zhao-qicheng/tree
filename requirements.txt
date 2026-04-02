@@ -6,6 +6,7 @@ numpy
 
 # 机器学习 (用于 action_space_explorer.py 的 PCA / t-SNE / K-Means)
 scikit-learn
+scikit-learn-extra
 
 # Web 可视化框架
 dash

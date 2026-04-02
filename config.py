@@ -226,7 +226,33 @@ PARALLEL_QUERY_TREES: bool = True
 # 消融实验配置 (Ablation Study)
 # ============================================================================
 # 启用/禁用 旋转对齐 (训练和推理查询阶段同步生效)
-ENABLE_ALIGN: bool = False
+ENABLE_ALIGN: bool = True
 
 # 启用/禁用 骨架归一化/重定向 (训练和推理查询阶段同步生效)
-ENABLE_NORMALIZE: bool = False
+ENABLE_NORMALIZE: bool = True
+
+# ============================================================================
+# 姿态模板聚类配置
+# ============================================================================
+# 特征源:
+# - "handcrafted": 三层人工特征
+# - "coordinates": 直接使用归一化后 17x3 坐标
+# - "octree_node": 八叉树实验特征
+POSE_TEMPLATE_FEATURE_SOURCE: str = "handcrafted"
+
+# 姿态模板通用预处理
+POSE_TEMPLATE_USE_ZSCORE: bool = True
+POSE_TEMPLATE_USE_PCA: bool = True
+POSE_TEMPLATE_PCA_COMPONENTS: float = 0.95
+
+# 坐标特征模式:
+# - "flattened": 直接展开为 51 维
+POSE_TEMPLATE_COORDINATE_MODE: str = "flattened"
+
+# 八叉树实验特征模式:
+# - "path_encoding": 每关节每层 octant 编码
+# - "joint_leaf_index_17d": 每关节最终叶节点索引，共 17 维
+POSE_TEMPLATE_OCTREE_NODE_MODE: str = "path_encoding"
+
+# 对八叉树实验特征，默认不做 PCA，尤其是 17 维叶节点索引模式
+POSE_TEMPLATE_OCTREE_USE_PCA: bool = False

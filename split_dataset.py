@@ -107,7 +107,7 @@ def main():
                         help="测试集输出路径 (默认为 config.TEST_DATA_DIR)")
     
     # 模式选择: random 或 skater
-    parser.add_argument("--mode", type=str, choices=["random", "skater"], default="skater",
+    parser.add_argument("--mode", type=str, choices=["random", "skater"], default="random",
                         help="划分模式: 'random' (随机比例) 或 'skater' (按运动员)")
     
     # 随机模式参数
@@ -117,7 +117,7 @@ def main():
                         help="随机数种子 (默认: 42)")
     
     # Skater模式参数
-    parser.add_argument("--test_skaters", type=str, nargs='+', default=["Skater_D"],
+    parser.add_argument("--test_skaters", type=str, nargs='+', default=["Skater_C"],
                         help="当使用 skater 模式时，指定放入测试集的运动员文件夹名称 (例如: Skater_D Skater_E)")
     
     parser.add_argument("--force", action="store_true", default="--force",help="如果输出目录存在，强制覆盖(先清除原目录)")
