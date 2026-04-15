@@ -1,6 +1,14 @@
 import os
+import sys
 import time
+import json
 import numpy as np
+
+# 将项目根目录加入到sys.path，以便引入 npy_loader
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from npy_loader import normalize_skeleton
+from sklearn.metrics import pairwise_distances_argmin_min
+
 import plotly.graph_objects as go
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
@@ -59,9 +67,13 @@ def align_skeleton(frame):
     
     # 应用旋转变换
     aligned = centered @ R.T
+    
+    # 增加归一化处理，约束同一动作在绝对空间内的骨骼长度比例一致
+    aligned = normalize_skeleton(aligned)
+    
     return aligned
 
-def load_and_process_data(root_dir='./data/npy/Skater_A/Axel/Axel_1.npy'):
+def load_and_process_data(root_dir='./data/npy'):
     """
     加载 .npy 数据，执行对齐，并使用 t-SNE 进行降维映射。
     支持两种输入：
@@ -123,26 +135,20 @@ def load_and_process_data(root_dir='./data/npy/Skater_A/Axel/Axel_1.npy'):
     X = np.array(all_frames)
     
     # 降维处理第一步：PCA 降噪
-    # 作用：将 51 维 (17关节*3) 压缩到 50 维，保留 99% 以上的方差，同时加速后面 t-SNE 的计算。
+    # 作用：自动压缩维度，并保留 95% 以上的核心方差，同时极大地加速和去噪。
     print("正在执行 PCA 降噪...")
-    pca = PCA(n_components=50)
+    pca = PCA(n_components=0.95)
     X_pca = pca.fit_transform(X)
+    print(f"PCA 已将维度压缩至 {X_pca.shape[1]} 维。")
     
     # 降维处理第二步：t-SNE 降维至 3D 空间
     # 作用：捕捉高维特征中的非线性结构（聚类团块），使结果利于 3D 可视化。
     print("正在执行 t-SNE 降维 (这可能需要几分钟重新计算)...")
-    # TSNE设定的核心参数：
-    # n_components=3: 输出维度
-    # perplexity=30: 信息熵，影响团块的紧密程度
-    # max_iter=1000: 最大迭代次数
-    # init='pca': 初始化方式
-    # learning_rate='auto': 学习率
-    # n_jobs=-1：开启多线程加速（非常重要，否则会很慢）
-    # verbose=1：打印进度，方便查看收敛情况
-    # early_exaggeration=20：加大夸张，把类推开
+    # TSNE设定的核心参数被调优：
+    # perplexity=80: 信息熵更大，更适应7万大数据量的团簇分布
     tsne = TSNE(
         n_components=3, 
-        perplexity=50, 
+        perplexity=80, 
         max_iter=1500, 
         init='pca', 
         learning_rate='auto', 
@@ -158,19 +164,28 @@ def load_and_process_data(root_dir='./data/npy/Skater_A/Axel/Axel_1.npy'):
     df['y'] = X_embedded[:, 1]
     df['z'] = X_embedded[:, 2]
     
-    return df
+    # 补充返回 PCA 高维特征矩阵，供给下游 KMeans 切分使用以提拉精度
+    return df, X_pca
 
 # --- 2. 缓存管理 ---
-# 为了避免每次启动都耗费几分钟计算 t-SNE，我们将结果缓存到本地 CSV
+# 为了避免每次启动都耗费几分钟计算特征转换，我们将结果全量缓存
 CACHE_FILE = 'output/action_space_cache.csv'
-if os.path.exists(CACHE_FILE):
-    print(f"检测到缓存文件 {CACHE_FILE}，正在快速加载...")
+PCA_CACHE_FILE = 'output/action_space_cache_pca.npy'
+
+# 确保输出目录存在
+if not os.path.exists('output'):
+    os.makedirs('output')
+
+if os.path.exists(CACHE_FILE) and os.path.exists(PCA_CACHE_FILE):
+    print(f"检测到缓存文件 {CACHE_FILE} 与特征阵，正在快速加载...")
     df = pd.read_csv(CACHE_FILE)
+    PCA_FEATURES = np.load(PCA_CACHE_FILE)
 else:
-    df = load_and_process_data()
+    df, PCA_FEATURES = load_and_process_data()
     # 首次计算后自动导出缓存
     df.to_csv(CACHE_FILE, index=False)
-    print(f"分析结果已保存至 {CACHE_FILE}")
+    np.save(PCA_CACHE_FILE, PCA_FEATURES)
+    print(f"分析结果及其高维抽象已保存至 output/ 目录下。")
 
 # --- 3. Dash 应用布局与交互 ---
 
@@ -228,7 +243,7 @@ app.layout = html.Div([
     # 交互控制区：设置聚类数量
     html.Div([
         html.Label("聚类数量 (K): ", style={'fontWeight': 'bold', 'marginRight': '10px'}),
-        dcc.Input(id='k-input', type='number', value=8, min=2, max=50, step=1, style={'width': '60px', 'marginRight': '10px'}),
+        dcc.Input(id='k-input', type='number', value=500, min=2, max=1000, step=1, style={'width': '60px', 'marginRight': '10px'}),
         html.Button('执行 K-Means 聚类分析', id='cluster-btn', n_clicks=0, style={'cursor': 'pointer', 'backgroundColor': '#007BFF', 'color': 'white', 'border': 'none', 'padding': '8px 20px', 'borderRadius': '5px', 'marginRight': '10px'}),
         html.Button('保存当前结果', id='save-btn', n_clicks=0, style={'cursor': 'pointer', 'backgroundColor': '#28A745', 'color': 'white', 'border': 'none', 'padding': '8px 20px', 'borderRadius': '5px', 'marginRight': '10px'}),
         html.Button('分析 K 值趋势 (8-50)', id='analyze-btn', n_clicks=0, style={'cursor': 'pointer', 'backgroundColor': '#17A2B8', 'color': 'white', 'border': 'none', 'padding': '8px 20px', 'borderRadius': '5px'}),
@@ -282,10 +297,11 @@ def update_clustering(n_clicks, k):
     print(f"正在对 3D 映射空间执行 K-Means (K={k})...")
     start_t = time.time()
     
-    current_coords = df[['x', 'y', 'z']].values
+    # 使用更高维度的抽象特征来取代 3D 挤压坐标，大幅度增强细微切割精度
+    features_for_clustering = PCA_FEATURES
     # n_init='auto' 是 sklearn 新版本推荐的设置
     kmeans = KMeans(n_clusters=k, random_state=42, n_init='auto')
-    labels = kmeans.fit_predict(current_coords)
+    labels = kmeans.fit_predict(features_for_clustering)
     
     new_fig = generate_scatter_figure(df, labels)
     msg = f"聚类成功 (K={k})！由于数据已降维，计算耗时仅为 {time.time()-start_t:.2f}s"
@@ -313,9 +329,9 @@ def save_clustering_result(n_clicks, k):
     print(f"正在导出结果至文件夹 (K={k})...")
     
     # 1. 计算标签
-    current_coords = df[['x', 'y', 'z']].values
+    features_for_clustering = PCA_FEATURES
     kmeans = KMeans(n_clusters=k, random_state=42, n_init='auto')
-    labels = kmeans.fit_predict(current_coords)
+    labels = kmeans.fit_predict(features_for_clustering)
     
     # 2. 准备导出目录
     export_dir = "output/结果导出"
@@ -332,7 +348,39 @@ def save_clustering_result(n_clicks, k):
         file_path = os.path.join(export_dir, f"{cluster_id}.csv")
         cluster_df.to_csv(file_path, index=False)
         
-    return f"✔️ 已成功导出 {k} 个分类文件至“{export_dir}”文件夹。"
+    print("正在构建标准化动作模板核心骨架...")
+    try:
+        centers = kmeans.cluster_centers_
+        closest_indices, _ = pairwise_distances_argmin_min(centers, features_for_clustering)
+        
+        templates_data = {}
+        for c_id, idx in enumerate(closest_indices):
+            target_info = df.iloc[idx]
+            pose_data = np.load(target_info['path'])
+            frame_idx = int(target_info['frame'])
+            raw_pose = pose_data[frame_idx]
+            
+            # 使用跟之前相同的大清洗方法处理
+            aligned_pose = align_skeleton(raw_pose)  
+            
+            templates_data[str(c_id)] = {
+                "cluster_id": c_id,
+                "label": str(c_id), # 默认按类数字填充类别描述名
+                "source_file": target_info['file'],
+                "frame_idx": frame_idx,
+                "source_path": target_info['path'],
+                "skeleton": aligned_pose.tolist() 
+            }
+            
+        template_file = os.path.join("output", "action_templates.json")
+        with open(template_file, "w", encoding="utf-8") as f:
+            json.dump(templates_data, f, ensure_ascii=False, indent=4)
+            
+        print(f"✔️ 标准字典提取成功：{template_file}")
+    except Exception as e:
+        print(f"❌ 模板抽取发生错误: {e}")
+        
+    return f"✔️ 已成功导出 {k} 个分类文件至“{export_dir}”文件夹，并创建模板动作字典库。"
 
 # 逻辑回调 3：K 值评估分析
 @app.callback(
@@ -353,7 +401,7 @@ def analyze_k_value(n_clicks):
         return dash.no_update, {'display': 'none'}, {'display': 'block'}
     
     print("开始分析 K 值趋势 (这可能需要几分钟)...")
-    coords = df[['x', 'y', 'z']].values
+    features_for_clustering = PCA_FEATURES
     
     k_range = range(8, 51)
     inertias = []
@@ -362,11 +410,11 @@ def analyze_k_value(n_clicks):
     for k in k_range:
         # 计算 K-Means
         kmeans = KMeans(n_clusters=k, random_state=42, n_init='auto')
-        labels = kmeans.fit_predict(coords)
+        labels = kmeans.fit_predict(features_for_clustering)
         
         # 记录指标
         inertias.append(kmeans.inertia_)
-        silhouettes.append(silhouette_score(coords, labels)) # 全量计算
+        silhouettes.append(silhouette_score(features_for_clustering, labels)) # 全量高维计算
         print(f"完成 K={k} 的计算...")
         
     # 创建双坐标轴图表
