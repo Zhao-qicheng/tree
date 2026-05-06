@@ -17,6 +17,78 @@ H36M_CONNECTIONS = [
     (12, 13), (14, 15), (15, 16)
 ]
 
+# ======= 动作字典常量 =======
+JUMP_TYPES = [
+    {"label": "Axel (A)", "value": "A"},
+    {"label": "Toeloop (T)", "value": "T"},
+    {"label": "Loop (Lo)", "value": "Lo"},
+    {"label": "Salchow (S)", "value": "S"},
+    {"label": "Flip (F)", "value": "F"},
+    {"label": "Lutz (Lz)", "value": "Lz"}
+]
+
+PHASE_STAGES = [
+    {"label": "1: 进入与滑行", "value": "1"},
+    {"label": "2: 起跳前压刃", "value": "2"},
+    {"label": "3: 起跳离冰", "value": "3"},
+    {"label": "4: 起跳过渡", "value": "4"},
+    {"label": "5: 空中旋转", "value": "5"},
+    {"label": "6: 打开落冰准备", "value": "6"},
+    {"label": "7: 落冰与滑出", "value": "7"}
+]
+
+TEMPORAL_FLAGS = [
+    {"label": "单帧独立判定 (S)", "value": "S"},
+    {"label": "需时序相邻帧 (T)", "value": "T"}
+]
+
+ACTION_UNITS = [
+    {"label": "H1: 头部左脚旋转", "value": "H1"},
+    {"label": "H2: 头部右旋转", "value": "H2"},
+    {"label": "H3: 头上仰", "value": "H3"},
+    {"label": "H4: 头下低", "value": "H4"},
+    {"label": "H5: 头左侧倾斜", "value": "H5"},
+    {"label": "H6: 头右侧倾斜", "value": "H6"},
+    
+    {"label": "T1: 躯干左旋转", "value": "T1"},
+    {"label": "T2: 躯干右旋转", "value": "T2"},
+    {"label": "T3: 躯干前倾", "value": "T3"},
+    {"label": "T4: 躯干后仰", "value": "T4"},
+    {"label": "T5: 躯干左倾斜", "value": "T5"},
+    {"label": "T6: 躯干右倾斜", "value": "T6"},
+    
+    {"label": "L1: 左上臂前屈", "value": "L1"},
+    {"label": "L2: 左上臂外展", "value": "L2"},
+    {"label": "L3: 左上臂后伸", "value": "L3"},
+    {"label": "L4: 肘部弯曲", "value": "L4"},
+    {"label": "L5: 手掌打开", "value": "L5"},
+    {"label": "L6: 手掌握拳", "value": "L6"},
+    
+    {"label": "R1: 右上臂前屈", "value": "R1"},
+    {"label": "R2: 右上臂外展", "value": "R2"},
+    {"label": "R3: 右上臂后伸", "value": "R3"},
+    {"label": "R4: 肘部弯曲", "value": "R4"},
+    {"label": "R5: 手掌打开", "value": "R5"},
+    {"label": "R6: 手掌握拳", "value": "R6"},
+    
+    {"label": "l1: 左髋前屈", "value": "l1"},
+    {"label": "l2: 左髋外展", "value": "l2"},
+    {"label": "l3: 左髋后伸", "value": "l3"},
+    {"label": "l4: 左髋内收", "value": "l4"},
+    {"label": "l5: 左膝弯曲", "value": "l5"},
+    {"label": "l6: 点冰（脚尖下压）", "value": "l6"},
+    {"label": "l7: 勾脚尖", "value": "l7"},
+    
+    {"label": "r1: 右髋前屈", "value": "r1"},
+    {"label": "r2: 右髋外展", "value": "r2"},
+    {"label": "r3: 右髋后伸", "value": "r3"},
+    {"label": "r4: 右髋内收", "value": "r4"},
+    {"label": "r5: 右膝弯曲", "value": "r5"},
+    {"label": "r6: 点冰（脚尖下压）", "value": "r6"},
+    {"label": "r7: 勾脚尖", "value": "r7"}
+]
+# ===========================
+
 DB_PATH = 'output/action_templates.json'
 
 def load_db():
@@ -114,8 +186,23 @@ app.layout = html.Div([
                     html.Br(),
                     html.Div(id='template-info', style={'whiteSpace': 'pre-wrap', 'backgroundColor': '#f8f9fa', 'padding': '15px', 'borderRadius': '5px'}),
                     html.Hr(),
-                    html.H3("为这个帧撰写中文标定标签："),
-                    dcc.Input(id='label-input', type='text', style={'width': '80%', 'padding': '10px'}, placeholder="目前是以数字命名，例如填入：滑行或空中转体"),
+                    
+                    html.H3("为这个帧进行多维打标："),
+                    
+                    html.Label("跳跃类型", style={'fontWeight': 'bold', 'marginTop': '10px', 'display': 'block'}),
+                    dcc.Dropdown(id='dropdown-jump-type', options=JUMP_TYPES, placeholder="选择跳跃类型..."),
+                    
+                    html.Label("阶段划分", style={'fontWeight': 'bold', 'marginTop': '10px', 'display': 'block'}),
+                    dcc.Dropdown(id='dropdown-stage', options=PHASE_STAGES, placeholder="选择所处阶段..."),
+                    
+                    html.Label("时序依赖标志", style={'fontWeight': 'bold', 'marginTop': '10px', 'display': 'block'}),
+                    dcc.RadioItems(id='radio-temporal-flag', options=TEMPORAL_FLAGS, value="S", inline=True, style={'marginBottom': '10px'}),
+                    
+                    html.Label("动作单元 (多选)", style={'fontWeight': 'bold', 'marginTop': '10px', 'display': 'block'}),
+                    dcc.Dropdown(id='dropdown-action-units', options=ACTION_UNITS, multi=True, placeholder="可选择多项组合..."),
+                    
+                    html.Div(id='label-preview', style={'marginTop': '15px', 'padding': '10px', 'fontFamily': 'monospace', 'backgroundColor': '#e9ecef', 'borderRadius': '5px', 'fontSize': '16px', 'fontWeight': 'bold'}),
+                    
                     html.Button("💾 录入并更名", id='save-label-btn', n_clicks=0, style={'marginTop': '15px', 'padding': '10px 20px', 'backgroundColor': '#28a745', 'color': 'white', 'border': 'none', 'cursor': 'pointer', 'borderRadius': '5px', 'fontWeight': 'bold'}),
                     html.Div(id='save-result-msg', style={'marginTop': '15px', 'color': 'blue'})
                 ], style={'width': '35%', 'display': 'inline-block', 'verticalAlign': 'top', 'padding': '20px', 'boxSizing': 'border-box'}),
@@ -127,7 +214,7 @@ app.layout = html.Div([
             ])
         ]),
 
-        # ====================== [板块 2] : 新品动作比对判决 ======================
+        # ====================== [板块 2] : 新品动作比令人判决 ======================
         dcc.Tab(label='🔬 单帧实时诊断与配型', children=[
             html.Div([
                 html.H3("指派本地 .npy 数据源路径进行定级", style={'textAlign': 'center'}),
@@ -182,48 +269,93 @@ def initialize_dropdown(_):
         
     return options, list(db.keys())[0]
 
+# 实时预览回调
+@app.callback(
+    Output('label-preview', 'children'),
+    [Input('dropdown-jump-type', 'value'),
+     Input('dropdown-stage', 'value'),
+     Input('radio-temporal-flag', 'value'),
+     Input('dropdown-action-units', 'value')]
+)
+def update_preview(jump, stage, temporal, units):
+    j_str = jump if jump else "?"
+    s_str = stage if stage else "?"
+    t_str = temporal if temporal else "S"
+    u_str = "[" + ",".join(units) + "]" if units else "[]"
+    
+    preview_text = f"{j_str}-{s_str}-{t_str}-{u_str}"
+    return f"🏷️ 预览编码格式: {preview_text}"
+
 @app.callback(
     [Output('template-pose-graph', 'figure'),
      Output('template-info', 'children'),
-     Output('label-input', 'value')],
+     Output('dropdown-jump-type', 'value'),
+     Output('dropdown-stage', 'value'),
+     Output('radio-temporal-flag', 'value'),
+     Output('dropdown-action-units', 'value')],
     Input('template-dropdown', 'value'),
     prevent_initial_call=False
 )
 def render_template(cluster_id):
     if cluster_id is None:
-         return dash.no_update, "无展示数据。", ""
+         return dash.no_update, "无展示数据。", None, None, "S", []
     
     db = load_db()
     if cluster_id not in db:
-        return dash.no_update, "分类字典已损坏或缺失", ""
+        return dash.no_update, "分类字典已损坏或缺失", None, None, "S", []
         
     data = db[cluster_id]
     skeleton = np.array(data['skeleton'])
     
     fig = create_pose_figure(skeleton, title=f"选定模型 - ID {cluster_id}", color='deepskyblue')
     
-    info_text = f"📍 模板标识: 【 {data['label']} 】\n"
-    info_text += f"📂 萃取来源: {data['source_file']}\n"
-    info_text += f"🎞️ 所在原帧: 第 {data['frame_idx']} 帧\n"
+    info_text = f"📍 模板标识: 【 {data.get('label', '未标注')} 】\n"
+    info_text += f"📂 萃取来源: {data.get('source_file', '未知')}\n"
+    info_text += f"🎞️ 所在原帧: 第 {data.get('frame_idx', '未知')} 帧\n"
     
-    return fig, info_text, data['label']
+    metadata = data.get('metadata', {})
+    j_val = metadata.get('jump_type', None)
+    s_val = metadata.get('stage', None)
+    t_val = metadata.get('temporal_flag', "S")
+    u_val = metadata.get('action_units', [])
+    
+    return fig, info_text, j_val, s_val, t_val, u_val
 
 # 修改保存动作
 @app.callback(
     Output('save-result-msg', 'children'),
     Input('save-label-btn', 'n_clicks'),
-    [State('template-dropdown', 'value'), State('label-input', 'value')],
+    [State('template-dropdown', 'value'), 
+     State('dropdown-jump-type', 'value'),
+     State('dropdown-stage', 'value'),
+     State('radio-temporal-flag', 'value'),
+     State('dropdown-action-units', 'value')],
     prevent_initial_call=True
 )
-def save_custom_label(n_clicks, cid, new_label):
-    if not new_label or not cid:
-        return "输入无效啦！"
+def save_custom_label(n_clicks, cid, jump, stage, temporal, units):
+    if not cid:
+        return "目标字典未选定！"
+    if not jump or not stage:
+        return "⚠️ 跳跃类型和阶段划分为必填项！"
+        
+    j_str = jump
+    s_str = stage
+    t_str = temporal if temporal else "S"
+    u_str = "[" + ",".join(units) + "]" if units else "[]"
+    
+    new_label = f"{j_str}-{s_str}-{t_str}-{u_str}"
     
     db = load_db()
     if cid in db:
         db[cid]['label'] = new_label
+        db[cid]['metadata'] = {
+            'jump_type': jump,
+            'stage': stage,
+            'temporal_flag': temporal,
+            'action_units': units if units else []
+        }
         save_db(db)
-        return f"已成功为字典 {cid} 指派新名：【{new_label}】! 页面刷新后左侧列表变动。"
+        return f"已成功为字典 {cid} 指派新编码：【{new_label}】! 页面刷新后左侧列表变动。"
     return "字典记录定位失败！"
 
 # ======= 测试与单帧匹配回调 =======
