@@ -13,6 +13,7 @@ plotly
 
 # 数据处理
 pandas
+opencv-python
 
 # BVH 格式解析 (data_loader / data_frame)
 bvh-python

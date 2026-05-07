@@ -1,10 +1,17 @@
 import os
 import sys
 import json
+import base64
+from pathlib import Path
 import numpy as np
 import dash
 from dash import dcc, html, Input, Output, State, ALL
 import plotly.graph_objects as go
+
+try:
+    import cv2
+except ImportError:
+    cv2 = None
 
 # 导入项目中通用的基础算法，用以进行测试帧与历史帧一样的环境
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -90,6 +97,22 @@ ACTION_UNITS = [
 # ===========================
 
 DB_PATH = 'output/action_templates.json'
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+VIDEO_ROOT = PROJECT_ROOT / "data" / "video"
+VIDEO_PLACEHOLDER = (
+    "data:image/svg+xml;base64,"
+    + base64.b64encode(
+        b"""
+        <svg xmlns="http://www.w3.org/2000/svg" width="960" height="540">
+            <rect width="100%" height="100%" fill="#f1f3f5"/>
+            <text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle"
+                  font-family="Arial" font-size="28" fill="#868e96">
+                No video frame
+            </text>
+        </svg>
+        """
+    ).decode("ascii")
+)
 
 def load_db():
     if os.path.exists(DB_PATH):
@@ -103,6 +126,138 @@ def load_db():
 def save_db(data):
     with open(DB_PATH, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
+
+
+def _normalize_candidate(path_like):
+    path = Path(str(path_like).replace("\\", os.sep).replace("/", os.sep))
+    if path.is_absolute():
+        return path
+    return PROJECT_ROOT / path
+
+
+def resolve_video_path(source_path=None, source_file=None):
+    candidates = []
+
+    if source_path:
+        npy_path = _normalize_candidate(source_path)
+        parts = list(npy_path.parts)
+        lower_parts = [p.lower() for p in parts]
+        if "npy" in lower_parts:
+            idx = lower_parts.index("npy")
+            rel_parts = parts[idx + 1:]
+            if rel_parts:
+                mapped_parts = list(rel_parts)
+                mapped_parts[0] = mapped_parts[0][:1].lower() + mapped_parts[0][1:]
+                candidates.append((VIDEO_ROOT / Path(*mapped_parts)).with_suffix(".mp4"))
+
+                legacy_parts = parts[:]
+                legacy_parts[idx] = "video"
+                candidates.append(Path(*legacy_parts).with_suffix(".mp4"))
+
+    if source_file:
+        source_name = Path(str(source_file)).with_suffix(".mp4").name
+        for root, _, file_names in os.walk(VIDEO_ROOT):
+            for file_name in file_names:
+                if file_name.lower() == source_name.lower():
+                    candidates.append(Path(root) / file_name)
+
+    seen = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        key = str(resolved).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        if resolved.exists():
+            return resolved
+    return None
+
+
+def get_video_metadata(video_path):
+    if cv2 is None:
+        return None, "未安装 opencv-python，无法读取视频帧。"
+    if not video_path:
+        return None, "未找到同源视频。"
+
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return None, f"视频无法打开: {video_path}"
+
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    fps = float(cap.get(cv2.CAP_PROP_FPS) or 0)
+    cap.release()
+
+    if frame_count <= 0:
+        return None, f"视频帧数读取失败: {video_path}"
+
+    duration = frame_count / fps if fps > 0 else 0
+    return {"path": str(video_path), "frame_count": frame_count, "fps": fps, "duration": duration}, None
+
+
+def encode_video_frame(video_path, frame_idx):
+    if cv2 is None:
+        return VIDEO_PLACEHOLDER, "未安装 opencv-python，无法读取视频帧。"
+
+    metadata, error = get_video_metadata(video_path)
+    if error:
+        return VIDEO_PLACEHOLDER, error
+
+    max_idx = metadata["frame_count"] - 1
+    safe_idx = max(0, min(int(frame_idx or 0), max_idx))
+    cap = cv2.VideoCapture(str(video_path))
+    cap.set(cv2.CAP_PROP_POS_FRAMES, safe_idx)
+    ok, frame = cap.read()
+    cap.release()
+
+    if not ok:
+        return VIDEO_PLACEHOLDER, f"读取视频第 {safe_idx} 帧失败。"
+
+    ok, buffer = cv2.imencode(".jpg", frame)
+    if not ok:
+        return VIDEO_PLACEHOLDER, "视频帧编码失败。"
+
+    encoded = base64.b64encode(buffer).decode("ascii")
+    return f"data:image/jpeg;base64,{encoded}", None
+
+
+def build_video_control_props(video_metadata, anchor_frame):
+    if not video_metadata:
+        return {
+            "range_min": 0,
+            "range_max": 1,
+            "range_value": [0, 1],
+            "range_marks": {0: '0', 1: '1'},
+            "range_disabled": True,
+            "frame_min": 0,
+            "frame_max": 1,
+            "frame_value": 0,
+            "frame_marks": {0: '0', 1: '1'},
+            "frame_disabled": True,
+        }
+
+    frame_count = video_metadata["frame_count"]
+    max_frame = frame_count - 1
+    safe_anchor = max(0, min(int(anchor_frame or 0), max_frame))
+    # 视频按 60 FPS 与 npy 帧一一对应，默认取标注帧前后 2 秒。
+    window = 120
+    start = max(0, safe_anchor - window)
+    end = min(max_frame, safe_anchor + window)
+    marks = {0: '0', max_frame: str(max_frame)}
+    if safe_anchor not in marks:
+        marks[safe_anchor] = f"标注帧 {safe_anchor}"
+
+    return {
+        "range_min": 0,
+        "range_max": max_frame,
+        "range_value": [start, end],
+        "range_marks": marks,
+        "range_disabled": False,
+        "frame_min": start,
+        "frame_max": end,
+        "frame_value": safe_anchor,
+        "frame_marks": {start: str(start), safe_anchor: f"当前 {safe_anchor}", end: str(end)},
+        "frame_disabled": False,
+    }
 
 # 借用原来探索系统里一模一样的对齐方法以供待测新样本处理前置
 def align_skeleton(frame):
@@ -207,9 +362,38 @@ app.layout = html.Div([
                     html.Div(id='save-result-msg', style={'marginTop': '15px', 'color': 'blue'})
                 ], style={'width': '35%', 'display': 'inline-block', 'verticalAlign': 'top', 'padding': '20px', 'boxSizing': 'border-box'}),
                 
-                # 右侧：看这具躯壳长什么样
+                # 右侧：标注帧骨架与同源视频帧同列展示
                 html.Div([
-                    dcc.Graph(id='template-pose-graph', style={'height': '75vh'})
+                    dcc.Store(id='template-video-store', data={}),
+                    dcc.Graph(id='template-pose-graph', style={'height': '44vh', 'width': '100%'}),
+                    html.Div([
+                        html.H3("同源视频辅助帧", style={'textAlign': 'center', 'margin': '10px 0'}),
+                        html.Div(id='template-video-status', style={'whiteSpace': 'pre-wrap', 'color': '#495057', 'marginBottom': '8px'}),
+                        html.Img(
+                            id='template-video-frame',
+                            src=VIDEO_PLACEHOLDER,
+                            style={'width': '100%', 'height': '34vh', 'objectFit': 'contain', 'backgroundColor': '#111', 'borderRadius': '6px'}
+                        ),
+                        html.Div([
+                            html.Label("选择辅助视频片段范围", style={'fontWeight': 'bold', 'display': 'block', 'marginTop': '10px'}),
+                            dcc.RangeSlider(
+                                id='template-video-range-slider',
+                                min=0, max=1, step=1, value=[0, 1],
+                                marks={0: '0', 1: '1'},
+                                disabled=True,
+                                tooltip={"placement": "bottom", "always_visible": True},
+                                allowCross=False
+                            ),
+                            html.Label("片段内查看帧", style={'fontWeight': 'bold', 'display': 'block', 'marginTop': '10px'}),
+                            dcc.Slider(
+                                id='template-video-frame-slider',
+                                min=0, max=1, step=1, value=0,
+                                marks={0: '0', 1: '1'},
+                                disabled=True,
+                                tooltip={"placement": "bottom", "always_visible": True}
+                            )
+                        ], style={'padding': '0 8px 8px 8px'})
+                    ], style={'width': '100%', 'boxSizing': 'border-box', 'padding': '10px 16px 0 16px'})
                 ], style={'width': '65%', 'display': 'inline-block', 'verticalAlign': 'top'})
             ])
         ]),
@@ -292,34 +476,126 @@ def update_preview(jump, stage, temporal, units):
      Output('dropdown-jump-type', 'value'),
      Output('dropdown-stage', 'value'),
      Output('radio-temporal-flag', 'value'),
-     Output('dropdown-action-units', 'value')],
+     Output('dropdown-action-units', 'value'),
+     Output('template-video-store', 'data'),
+     Output('template-video-status', 'children'),
+     Output('template-video-frame', 'src'),
+     Output('template-video-range-slider', 'min'),
+     Output('template-video-range-slider', 'max'),
+     Output('template-video-range-slider', 'value'),
+     Output('template-video-range-slider', 'marks'),
+     Output('template-video-range-slider', 'disabled'),
+     Output('template-video-frame-slider', 'min'),
+     Output('template-video-frame-slider', 'max'),
+     Output('template-video-frame-slider', 'value'),
+     Output('template-video-frame-slider', 'marks'),
+     Output('template-video-frame-slider', 'disabled')],
     Input('template-dropdown', 'value'),
     prevent_initial_call=False
 )
 def render_template(cluster_id):
     if cluster_id is None:
-         return dash.no_update, "无展示数据。", None, None, "S", []
+         controls = build_video_control_props(None, 0)
+         return (
+             dash.no_update, "无展示数据。", None, None, "S", [], {}, "无展示数据。", VIDEO_PLACEHOLDER,
+             controls["range_min"], controls["range_max"], controls["range_value"], controls["range_marks"], controls["range_disabled"],
+             controls["frame_min"], controls["frame_max"], controls["frame_value"], controls["frame_marks"], controls["frame_disabled"],
+         )
     
     db = load_db()
     if cluster_id not in db:
-        return dash.no_update, "分类字典已损坏或缺失", None, None, "S", []
+        controls = build_video_control_props(None, 0)
+        return (
+            dash.no_update, "分类字典已损坏或缺失", None, None, "S", [], {}, "分类字典已损坏或缺失。", VIDEO_PLACEHOLDER,
+            controls["range_min"], controls["range_max"], controls["range_value"], controls["range_marks"], controls["range_disabled"],
+            controls["frame_min"], controls["frame_max"], controls["frame_value"], controls["frame_marks"], controls["frame_disabled"],
+        )
         
     data = db[cluster_id]
     skeleton = np.array(data['skeleton'])
+    source_path = data.get('source_path')
+    source_file = data.get('source_file', '未知')
+    frame_idx = int(data.get('frame_idx', 0) or 0)
     
     fig = create_pose_figure(skeleton, title=f"选定模型 - ID {cluster_id}", color='deepskyblue')
     
     info_text = f"📍 模板标识: 【 {data.get('label', '未标注')} 】\n"
-    info_text += f"📂 萃取来源: {data.get('source_file', '未知')}\n"
-    info_text += f"🎞️ 所在原帧: 第 {data.get('frame_idx', '未知')} 帧\n"
+    info_text += f"📂 萃取来源: {source_file}\n"
+    info_text += f"🎞️ 所在原帧: 第 {frame_idx} 帧\n"
     
     metadata = data.get('metadata', {})
     j_val = metadata.get('jump_type', None)
     s_val = metadata.get('stage', None)
     t_val = metadata.get('temporal_flag', "S")
     u_val = metadata.get('action_units', [])
+
+    video_path = resolve_video_path(source_path, source_file)
+    video_metadata, video_error = get_video_metadata(video_path)
+    controls = build_video_control_props(video_metadata, frame_idx)
+
+    if video_metadata:
+        frame_src, frame_error = encode_video_frame(video_metadata["path"], frame_idx)
+        fps_text = f"{video_metadata['fps']:.2f}" if video_metadata["fps"] else "未知"
+        status = (
+            f"视频: {video_metadata['path']}\n"
+            f"帧数: {video_metadata['frame_count']} | FPS: {fps_text} | 当前帧: {min(frame_idx, video_metadata['frame_count'] - 1)}"
+        )
+        if frame_error:
+            status += f"\n{frame_error}"
+    else:
+        frame_src = VIDEO_PLACEHOLDER
+        status = video_error or "未找到同源视频。"
+        if source_path:
+            status += f"\n源姿态路径: {source_path}"
     
-    return fig, info_text, j_val, s_val, t_val, u_val
+    return (
+        fig, info_text, j_val, s_val, t_val, u_val, video_metadata or {}, status, frame_src,
+        controls["range_min"], controls["range_max"], controls["range_value"], controls["range_marks"], controls["range_disabled"],
+        controls["frame_min"], controls["frame_max"], controls["frame_value"], controls["frame_marks"], controls["frame_disabled"],
+    )
+
+
+@app.callback(
+    [Output('template-video-frame-slider', 'min', allow_duplicate=True),
+     Output('template-video-frame-slider', 'max', allow_duplicate=True),
+     Output('template-video-frame-slider', 'value', allow_duplicate=True),
+     Output('template-video-frame-slider', 'marks', allow_duplicate=True)],
+    Input('template-video-range-slider', 'value'),
+    State('template-video-frame-slider', 'value'),
+    prevent_initial_call=True
+)
+def sync_video_frame_slider(frame_range, current_frame):
+    if not frame_range or len(frame_range) != 2:
+        return 0, 1, 0, {0: '0', 1: '1'}
+
+    start, end = sorted([int(frame_range[0]), int(frame_range[1])])
+    if start == end:
+        end = start + 1
+    value = int(current_frame or start)
+    value = max(start, min(value, end))
+    return start, end, value, {start: str(start), value: f"当前 {value}", end: str(end)}
+
+
+@app.callback(
+    [Output('template-video-frame', 'src', allow_duplicate=True),
+     Output('template-video-status', 'children', allow_duplicate=True)],
+    Input('template-video-frame-slider', 'value'),
+    State('template-video-store', 'data'),
+    prevent_initial_call=True
+)
+def update_video_frame(frame_idx, video_metadata):
+    if not video_metadata or not video_metadata.get("path"):
+        return VIDEO_PLACEHOLDER, "未找到同源视频。"
+
+    frame_src, error = encode_video_frame(video_metadata["path"], frame_idx)
+    fps_text = f"{video_metadata.get('fps', 0):.2f}" if video_metadata.get("fps") else "未知"
+    status = (
+        f"视频: {video_metadata['path']}\n"
+        f"帧数: {video_metadata['frame_count']} | FPS: {fps_text} | 当前帧: {int(frame_idx or 0)}"
+    )
+    if error:
+        status += f"\n{error}"
+    return frame_src, status
 
 # 修改保存动作
 @app.callback(

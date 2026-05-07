@@ -18,7 +18,7 @@ data/json/
 data_test/
 data_train/
 big_data/
-
+data/
 # 输出文件
 output/
 

@@ -1,0 +1,20 @@
+实验选项
+人工特征 + PCA
+python scripts/build_pose_templates.py --data-dir data/npy/Skater_A --output-dir output/pose_templates_handcrafted --feature-source handcrafted --use-zscore --use-pca
+坐标特征 + PCA
+python scripts/build_pose_templates.py --data-dir data/npy/Skater_A --output-dir output/pose_templates_coordinates_pca --feature-source coordinates --coordinate-mode flattened --use-zscore --use-pca
+坐标特征 + 不做 PCA
+python scripts/build_pose_templates.py --data-dir data/npy/Skater_A --output-dir output/pose_templates_coordinates_no_pca --feature-source coordinates --coordinate-mode flattened --use-zscore --disable-pca
+17 维八叉树叶节点索引 + 不做 PCA
+python scripts/build_pose_templates.py --data-dir data/npy/Skater_A --output-dir output/pose_templates_octree_leaf17 --feature-source octree_node --octree-node-mode joint_leaf_index_17d --use-zscore --disable-pca
+八叉树路径编码 + 可选 PCA
+python scripts/build_pose_templates.py --data-dir data/npy/Skater_A --output-dir output/pose_templates_octree_path --feature-source octree_node --octree-node-mode path_encoding --use-zscore --use-pca
+打开审查界面
+看人工特征结果：
+python scripts/visualize_rule_classifier.py --output-dir output/pose_templates_handcrafted
+
+看坐标特征结果：
+python scripts/visualize_rule_classifier.py --output-dir output/pose_templates_coordinates_pca
+
+看 17 维叶节点结果：
+python scripts/visualize_rule_classifier.py --output-dir output/pose_templates_octree_leaf17
