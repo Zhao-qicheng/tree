@@ -50,7 +50,7 @@ TEMPORAL_FLAGS = [
 ]
 
 ACTION_UNITS = [
-    {"label": "H1: 头部左脚旋转", "value": "H1"},
+    {"label": "H1: 头部左旋转", "value": "H1"},
     {"label": "H2: 头部右旋转", "value": "H2"},
     {"label": "H3: 头上仰", "value": "H3"},
     {"label": "H4: 头下低", "value": "H4"},
@@ -99,6 +99,7 @@ ACTION_UNITS = [
 DB_PATH = 'output/action_templates.json'
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 VIDEO_ROOT = PROJECT_ROOT / "data" / "video"
+CAMERA_IDS = [f"cam_{idx}" for idx in range(1, 13)]
 VIDEO_PLACEHOLDER = (
     "data:image/svg+xml;base64,"
     + base64.b64encode(
@@ -135,8 +136,56 @@ def _normalize_candidate(path_like):
     return PROJECT_ROOT / path
 
 
-def resolve_video_path(source_path=None, source_file=None):
+def _skater_from_source_path(source_path):
+    if not source_path:
+        return None
+
+    npy_path = _normalize_candidate(source_path)
+    parts = list(npy_path.parts)
+    lower_parts = [p.lower() for p in parts]
+    if "npy" not in lower_parts:
+        return None
+
+    idx = lower_parts.index("npy")
+    rel_parts = parts[idx + 1:]
+    if not rel_parts:
+        return None
+
+    skater = rel_parts[0]
+    return skater[:1].lower() + skater[1:]
+
+
+def _source_video_name(source_path=None, source_file=None):
+    if source_file and source_file != '未知':
+        return Path(str(source_file)).with_suffix(".mp4").name
+    if source_path:
+        return Path(str(source_path)).with_suffix(".mp4").name
+    return None
+
+
+def discover_camera_options(source_path=None, source_file=None):
+    skater = _skater_from_source_path(source_path)
+    video_name = _source_video_name(source_path, source_file)
+    options = []
+
+    for camera in CAMERA_IDS:
+        label = camera
+        if skater and video_name:
+            candidate = VIDEO_ROOT / skater / camera / video_name
+            if candidate.exists():
+                label = f"{camera} (可用)"
+        options.append({"label": label, "value": camera})
+
+    return options
+
+
+def resolve_video_path(source_path=None, source_file=None, camera="cam_1"):
     candidates = []
+    skater = _skater_from_source_path(source_path)
+    video_name = _source_video_name(source_path, source_file)
+
+    if skater and video_name and camera:
+        candidates.append(VIDEO_ROOT / skater / camera / video_name)
 
     if source_path:
         npy_path = _normalize_candidate(source_path)
@@ -368,6 +417,14 @@ app.layout = html.Div([
                     dcc.Graph(id='template-pose-graph', style={'height': '44vh', 'width': '100%'}),
                     html.Div([
                         html.H3("同源视频辅助帧", style={'textAlign': 'center', 'margin': '10px 0'}),
+                        html.Label("选择视频视角", style={'fontWeight': 'bold', 'display': 'block', 'marginBottom': '6px'}),
+                        dcc.Dropdown(
+                            id='template-video-camera-dropdown',
+                            options=[{"label": camera, "value": camera} for camera in CAMERA_IDS],
+                            value='cam_1',
+                            clearable=False,
+                            style={'marginBottom': '8px'}
+                        ),
                         html.Div(id='template-video-status', style={'whiteSpace': 'pre-wrap', 'color': '#495057', 'marginBottom': '8px'}),
                         html.Img(
                             id='template-video-frame',
@@ -477,6 +534,8 @@ def update_preview(jump, stage, temporal, units):
      Output('dropdown-stage', 'value'),
      Output('radio-temporal-flag', 'value'),
      Output('dropdown-action-units', 'value'),
+     Output('template-video-camera-dropdown', 'options'),
+     Output('template-video-camera-dropdown', 'value'),
      Output('template-video-store', 'data'),
      Output('template-video-status', 'children'),
      Output('template-video-frame', 'src'),
@@ -497,7 +556,8 @@ def render_template(cluster_id):
     if cluster_id is None:
          controls = build_video_control_props(None, 0)
          return (
-             dash.no_update, "无展示数据。", None, None, "S", [], {}, "无展示数据。", VIDEO_PLACEHOLDER,
+             dash.no_update, "无展示数据。", None, None, "S", [],
+             discover_camera_options(), "cam_1", {}, "无展示数据。", VIDEO_PLACEHOLDER,
              controls["range_min"], controls["range_max"], controls["range_value"], controls["range_marks"], controls["range_disabled"],
              controls["frame_min"], controls["frame_max"], controls["frame_value"], controls["frame_marks"], controls["frame_disabled"],
          )
@@ -506,7 +566,8 @@ def render_template(cluster_id):
     if cluster_id not in db:
         controls = build_video_control_props(None, 0)
         return (
-            dash.no_update, "分类字典已损坏或缺失", None, None, "S", [], {}, "分类字典已损坏或缺失。", VIDEO_PLACEHOLDER,
+            dash.no_update, "分类字典已损坏或缺失", None, None, "S", [],
+            discover_camera_options(), "cam_1", {}, "分类字典已损坏或缺失。", VIDEO_PLACEHOLDER,
             controls["range_min"], controls["range_max"], controls["range_value"], controls["range_marks"], controls["range_disabled"],
             controls["frame_min"], controls["frame_max"], controls["frame_value"], controls["frame_marks"], controls["frame_disabled"],
         )
@@ -528,8 +589,10 @@ def render_template(cluster_id):
     s_val = metadata.get('stage', None)
     t_val = metadata.get('temporal_flag', "S")
     u_val = metadata.get('action_units', [])
+    camera_options = discover_camera_options(source_path, source_file)
+    camera_value = "cam_1"
 
-    video_path = resolve_video_path(source_path, source_file)
+    video_path = resolve_video_path(source_path, source_file, camera_value)
     video_metadata, video_error = get_video_metadata(video_path)
     controls = build_video_control_props(video_metadata, frame_idx)
 
@@ -537,6 +600,7 @@ def render_template(cluster_id):
         frame_src, frame_error = encode_video_frame(video_metadata["path"], frame_idx)
         fps_text = f"{video_metadata['fps']:.2f}" if video_metadata["fps"] else "未知"
         status = (
+            f"视角: {camera_value}\n"
             f"视频: {video_metadata['path']}\n"
             f"帧数: {video_metadata['frame_count']} | FPS: {fps_text} | 当前帧: {min(frame_idx, video_metadata['frame_count'] - 1)}"
         )
@@ -547,9 +611,18 @@ def render_template(cluster_id):
         status = video_error or "未找到同源视频。"
         if source_path:
             status += f"\n源姿态路径: {source_path}"
+        status += f"\n当前视角: {camera_value}"
+
+    video_store = {
+        "source_path": source_path,
+        "source_file": source_file,
+        "frame_idx": frame_idx,
+        "camera": camera_value,
+        "metadata": video_metadata or {},
+    }
     
     return (
-        fig, info_text, j_val, s_val, t_val, u_val, video_metadata or {}, status, frame_src,
+        fig, info_text, j_val, s_val, t_val, u_val, camera_options, camera_value, video_store, status, frame_src,
         controls["range_min"], controls["range_max"], controls["range_value"], controls["range_marks"], controls["range_disabled"],
         controls["frame_min"], controls["frame_max"], controls["frame_value"], controls["frame_marks"], controls["frame_disabled"],
     )
@@ -577,6 +650,75 @@ def sync_video_frame_slider(frame_range, current_frame):
 
 
 @app.callback(
+    [Output('template-video-store', 'data', allow_duplicate=True),
+     Output('template-video-status', 'children', allow_duplicate=True),
+     Output('template-video-frame', 'src', allow_duplicate=True),
+     Output('template-video-range-slider', 'min', allow_duplicate=True),
+     Output('template-video-range-slider', 'max', allow_duplicate=True),
+     Output('template-video-range-slider', 'value', allow_duplicate=True),
+     Output('template-video-range-slider', 'marks', allow_duplicate=True),
+     Output('template-video-range-slider', 'disabled', allow_duplicate=True),
+     Output('template-video-frame-slider', 'min', allow_duplicate=True),
+     Output('template-video-frame-slider', 'max', allow_duplicate=True),
+     Output('template-video-frame-slider', 'value', allow_duplicate=True),
+     Output('template-video-frame-slider', 'marks', allow_duplicate=True),
+     Output('template-video-frame-slider', 'disabled', allow_duplicate=True)],
+    Input('template-video-camera-dropdown', 'value'),
+    [State('template-video-store', 'data'),
+     State('template-video-frame-slider', 'value')],
+    prevent_initial_call=True
+)
+def update_video_camera(camera, video_store, current_frame):
+    if not video_store:
+        controls = build_video_control_props(None, 0)
+        return (
+            {}, "无展示数据。", VIDEO_PLACEHOLDER,
+            controls["range_min"], controls["range_max"], controls["range_value"], controls["range_marks"], controls["range_disabled"],
+            controls["frame_min"], controls["frame_max"], controls["frame_value"], controls["frame_marks"], controls["frame_disabled"],
+        )
+
+    source_path = video_store.get("source_path")
+    source_file = video_store.get("source_file")
+    frame_idx = int(current_frame if current_frame is not None else video_store.get("frame_idx", 0) or 0)
+    camera = camera or "cam_1"
+
+    video_path = resolve_video_path(source_path, source_file, camera)
+    video_metadata, video_error = get_video_metadata(video_path)
+    controls = build_video_control_props(video_metadata, frame_idx)
+
+    if video_metadata:
+        safe_frame = max(0, min(frame_idx, video_metadata["frame_count"] - 1))
+        frame_src, frame_error = encode_video_frame(video_metadata["path"], safe_frame)
+        fps_text = f"{video_metadata['fps']:.2f}" if video_metadata["fps"] else "未知"
+        status = (
+            f"视角: {camera}\n"
+            f"视频: {video_metadata['path']}\n"
+            f"帧数: {video_metadata['frame_count']} | FPS: {fps_text} | 当前帧: {safe_frame}"
+        )
+        if frame_error:
+            status += f"\n{frame_error}"
+    else:
+        frame_src = VIDEO_PLACEHOLDER
+        status = video_error or "未找到同源视频。"
+        status += f"\n当前视角: {camera}"
+        if source_path:
+            status += f"\n源姿态路径: {source_path}"
+
+    next_store = {
+        "source_path": source_path,
+        "source_file": source_file,
+        "frame_idx": video_store.get("frame_idx", 0),
+        "camera": camera,
+        "metadata": video_metadata or {},
+    }
+    return (
+        next_store, status, frame_src,
+        controls["range_min"], controls["range_max"], controls["range_value"], controls["range_marks"], controls["range_disabled"],
+        controls["frame_min"], controls["frame_max"], controls["frame_value"], controls["frame_marks"], controls["frame_disabled"],
+    )
+
+
+@app.callback(
     [Output('template-video-frame', 'src', allow_duplicate=True),
      Output('template-video-status', 'children', allow_duplicate=True)],
     Input('template-video-frame-slider', 'value'),
@@ -584,14 +726,17 @@ def sync_video_frame_slider(frame_range, current_frame):
     prevent_initial_call=True
 )
 def update_video_frame(frame_idx, video_metadata):
-    if not video_metadata or not video_metadata.get("path"):
+    if not video_metadata or not video_metadata.get("metadata", {}).get("path"):
         return VIDEO_PLACEHOLDER, "未找到同源视频。"
 
-    frame_src, error = encode_video_frame(video_metadata["path"], frame_idx)
-    fps_text = f"{video_metadata.get('fps', 0):.2f}" if video_metadata.get("fps") else "未知"
+    metadata = video_metadata["metadata"]
+    safe_frame = max(0, min(int(frame_idx or 0), metadata["frame_count"] - 1))
+    frame_src, error = encode_video_frame(metadata["path"], safe_frame)
+    fps_text = f"{metadata.get('fps', 0):.2f}" if metadata.get("fps") else "未知"
     status = (
-        f"视频: {video_metadata['path']}\n"
-        f"帧数: {video_metadata['frame_count']} | FPS: {fps_text} | 当前帧: {int(frame_idx or 0)}"
+        f"视角: {video_metadata.get('camera', 'cam_1')}\n"
+        f"视频: {metadata['path']}\n"
+        f"帧数: {metadata['frame_count']} | FPS: {fps_text} | 当前帧: {safe_frame}"
     )
     if error:
         status += f"\n{error}"
