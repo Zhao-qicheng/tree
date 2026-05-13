@@ -99,6 +99,7 @@ ACTION_UNITS = [
 DB_PATH = 'output/action_templates.json'
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 VIDEO_ROOT = PROJECT_ROOT / "data" / "video"
+JSON_ROOT = PROJECT_ROOT / "data" / "json"
 CAMERA_IDS = [f"cam_{idx}" for idx in range(1, 13)]
 VIDEO_PLACEHOLDER = (
     "data:image/svg+xml;base64,"
@@ -177,6 +178,43 @@ def discover_camera_options(source_path=None, source_file=None):
         options.append({"label": label, "value": camera})
 
     return options
+
+
+def get_npy_video_offset(source_path):
+    """
+    解析对应的 JSON 文件，计算该 npy 姿态在视频中的起始帧偏移量。
+    算法参考原始数据集 format.py 的获取公共区间逻辑。
+    """
+    if not source_path: return 0
+    
+    # 构建 JSON 路径
+    p = Path(source_path)
+    parts = list(p.parts)
+    lower_parts = [x.lower() for x in parts]
+    if "npy" in lower_parts:
+        idx = lower_parts.index("npy")
+        parts[idx] = "json"
+    json_path = Path(*parts).with_suffix(".json")
+    if not json_path.is_absolute():
+        json_path = PROJECT_ROOT / json_path
+
+    with open(json_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
+    def get_main_range(parts):
+        ranges = [(p['Range']['Start'], p['Range']['End']) for p in parts]
+        lengths = [e - s for s, e in ranges]
+        idx = int(np.argmax(lengths))
+        return ranges[idx][0] - 1, ranges[idx][1] - 1
+
+    markers = data['Markers']
+    s0, _ = get_main_range(markers[0]['Parts'])
+    t_start = s0
+    for m in markers:
+        ts, _ = get_main_range(m['Parts'])
+        t_start = max(t_start, ts)
+    
+    return t_start
 
 
 def resolve_video_path(source_path=None, source_file=None, camera="cam_1"):
@@ -594,15 +632,20 @@ def render_template(cluster_id):
 
     video_path = resolve_video_path(source_path, source_file, camera_value)
     video_metadata, video_error = get_video_metadata(video_path)
+    
+    # 获取 JSON 偏移量并对齐
+    offset = get_npy_video_offset(source_path)
+    absolute_video_frame = frame_idx + offset
+    
     controls = build_video_control_props(video_metadata, frame_idx)
 
     if video_metadata:
-        frame_src, frame_error = encode_video_frame(video_metadata["path"], frame_idx)
+        frame_src, frame_error = encode_video_frame(video_metadata["path"], absolute_video_frame)
         fps_text = f"{video_metadata['fps']:.2f}" if video_metadata["fps"] else "未知"
         status = (
-            f"视角: {camera_value}\n"
+            f"视角: {camera_value} | 对齐偏移: {offset}\n"
             f"视频: {video_metadata['path']}\n"
-            f"帧数: {video_metadata['frame_count']} | FPS: {fps_text} | 当前帧: {min(frame_idx, video_metadata['frame_count'] - 1)}"
+            f"帧数: {video_metadata['frame_count']} | FPS: {fps_text} | 视频当前帧: {min(absolute_video_frame, video_metadata['frame_count'] - 1)}"
         )
         if frame_error:
             status += f"\n{frame_error}"
@@ -617,6 +660,7 @@ def render_template(cluster_id):
         "source_path": source_path,
         "source_file": source_file,
         "frame_idx": frame_idx,
+        "offset": offset,
         "camera": camera_value,
         "metadata": video_metadata or {},
     }
@@ -684,23 +728,28 @@ def update_video_camera(camera, video_store, current_frame):
 
     video_path = resolve_video_path(source_path, source_file, camera)
     video_metadata, video_error = get_video_metadata(video_path)
+    
+    # 获取对齐偏移
+    offset = get_npy_video_offset(source_path)
+    absolute_video_frame = frame_idx + offset
+    
     controls = build_video_control_props(video_metadata, frame_idx)
 
     if video_metadata:
-        safe_frame = max(0, min(frame_idx, video_metadata["frame_count"] - 1))
+        safe_frame = max(0, min(absolute_video_frame, video_metadata["frame_count"] - 1))
         frame_src, frame_error = encode_video_frame(video_metadata["path"], safe_frame)
         fps_text = f"{video_metadata['fps']:.2f}" if video_metadata["fps"] else "未知"
         status = (
-            f"视角: {camera}\n"
+            f"视角: {camera} | 对齐偏移: {offset}\n"
             f"视频: {video_metadata['path']}\n"
-            f"帧数: {video_metadata['frame_count']} | FPS: {fps_text} | 当前帧: {safe_frame}"
+            f"帧数: {video_metadata['frame_count']} | FPS: {fps_text} | 视频当前帧: {safe_frame}"
         )
         if frame_error:
             status += f"\n{frame_error}"
     else:
         frame_src = VIDEO_PLACEHOLDER
         status = video_error or "未找到同源视频。"
-        status += f"\n当前视角: {camera}"
+        status += f"\n当前视角: {camera} | 偏移: {offset}"
         if source_path:
             status += f"\n源姿态路径: {source_path}"
 
@@ -708,6 +757,7 @@ def update_video_camera(camera, video_store, current_frame):
         "source_path": source_path,
         "source_file": source_file,
         "frame_idx": video_store.get("frame_idx", 0),
+        "offset": offset,
         "camera": camera,
         "metadata": video_metadata or {},
     }
@@ -730,13 +780,16 @@ def update_video_frame(frame_idx, video_metadata):
         return VIDEO_PLACEHOLDER, "未找到同源视频。"
 
     metadata = video_metadata["metadata"]
-    safe_frame = max(0, min(int(frame_idx or 0), metadata["frame_count"] - 1))
+    offset = video_metadata.get("offset", 0)
+    absolute_video_frame = int(frame_idx or 0) + offset
+    
+    safe_frame = max(0, min(absolute_video_frame, metadata["frame_count"] - 1))
     frame_src, error = encode_video_frame(metadata["path"], safe_frame)
     fps_text = f"{metadata.get('fps', 0):.2f}" if metadata.get("fps") else "未知"
     status = (
-        f"视角: {video_metadata.get('camera', 'cam_1')}\n"
+        f"视角: {video_metadata.get('camera', 'cam_1')} | 对齐偏移: {offset}\n"
         f"视频: {metadata['path']}\n"
-        f"帧数: {metadata['frame_count']} | FPS: {fps_text} | 当前帧: {safe_frame}"
+        f"帧数: {metadata['frame_count']} | FPS: {fps_text} | 视频当前帧: {safe_frame}"
     )
     if error:
         status += f"\n{error}"
