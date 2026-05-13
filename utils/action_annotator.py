@@ -325,24 +325,12 @@ def build_video_control_props(video_metadata, anchor_frame):
     frame_count = video_metadata["frame_count"]
     max_frame = frame_count - 1
     safe_anchor = max(0, min(int(anchor_frame or 0), max_frame))
-    # 视频按 60 FPS 与 npy 帧一一对应，默认取标注帧前后 2 秒。
-    window = 120
-    start = max(0, safe_anchor - window)
-    end = min(max_frame, safe_anchor + window)
-    marks = {0: '0', max_frame: str(max_frame)}
-    if safe_anchor not in marks:
-        marks[safe_anchor] = f"标注帧 {safe_anchor}"
-
+    
     return {
-        "range_min": 0,
-        "range_max": max_frame,
-        "range_value": [start, end],
-        "range_marks": marks,
-        "range_disabled": False,
-        "frame_min": start,
-        "frame_max": end,
+        "frame_min": 0,
+        "frame_max": max_frame,
         "frame_value": safe_anchor,
-        "frame_marks": {start: str(start), safe_anchor: f"当前 {safe_anchor}", end: str(end)},
+        "frame_marks": {0: '0', safe_anchor: f"对齐帧 {safe_anchor}", max_frame: str(max_frame)},
         "frame_disabled": False,
     }
 
@@ -470,16 +458,7 @@ app.layout = html.Div([
                             style={'width': '100%', 'height': '34vh', 'objectFit': 'contain', 'backgroundColor': '#111', 'borderRadius': '6px'}
                         ),
                         html.Div([
-                            html.Label("选择辅助视频片段范围", style={'fontWeight': 'bold', 'display': 'block', 'marginTop': '10px'}),
-                            dcc.RangeSlider(
-                                id='template-video-range-slider',
-                                min=0, max=1, step=1, value=[0, 1],
-                                marks={0: '0', 1: '1'},
-                                disabled=True,
-                                tooltip={"placement": "bottom", "always_visible": True},
-                                allowCross=False
-                            ),
-                            html.Label("片段内查看帧", style={'fontWeight': 'bold', 'display': 'block', 'marginTop': '10px'}),
+                            html.Label("手动调整视频帧 (当前已自动对齐)", style={'fontWeight': 'bold', 'display': 'block', 'marginTop': '10px'}),
                             dcc.Slider(
                                 id='template-video-frame-slider',
                                 min=0, max=1, step=1, value=0,
@@ -577,11 +556,6 @@ def update_preview(jump, stage, temporal, units):
      Output('template-video-store', 'data'),
      Output('template-video-status', 'children'),
      Output('template-video-frame', 'src'),
-     Output('template-video-range-slider', 'min'),
-     Output('template-video-range-slider', 'max'),
-     Output('template-video-range-slider', 'value'),
-     Output('template-video-range-slider', 'marks'),
-     Output('template-video-range-slider', 'disabled'),
      Output('template-video-frame-slider', 'min'),
      Output('template-video-frame-slider', 'max'),
      Output('template-video-frame-slider', 'value'),
@@ -592,13 +566,12 @@ def update_preview(jump, stage, temporal, units):
 )
 def render_template(cluster_id):
     if cluster_id is None:
-         controls = build_video_control_props(None, 0)
-         return (
-             dash.no_update, "无展示数据。", None, None, "S", [],
-             discover_camera_options(), "cam_1", {}, "无展示数据。", VIDEO_PLACEHOLDER,
-             controls["range_min"], controls["range_max"], controls["range_value"], controls["range_marks"], controls["range_disabled"],
-             controls["frame_min"], controls["frame_max"], controls["frame_value"], controls["frame_marks"], controls["frame_disabled"],
-         )
+        controls = build_video_control_props(None, 0)
+        return (
+            dash.no_update, "无展示数据。", None, None, "S", [],
+            discover_camera_options(), "cam_1", {}, "无展示数据。", VIDEO_PLACEHOLDER,
+            controls["frame_min"], controls["frame_max"], controls["frame_value"], controls["frame_marks"], controls["frame_disabled"],
+        )
     
     db = load_db()
     if cluster_id not in db:
@@ -606,7 +579,6 @@ def render_template(cluster_id):
         return (
             dash.no_update, "分类字典已损坏或缺失", None, None, "S", [],
             discover_camera_options(), "cam_1", {}, "分类字典已损坏或缺失。", VIDEO_PLACEHOLDER,
-            controls["range_min"], controls["range_max"], controls["range_value"], controls["range_marks"], controls["range_disabled"],
             controls["frame_min"], controls["frame_max"], controls["frame_value"], controls["frame_marks"], controls["frame_disabled"],
         )
         
@@ -637,7 +609,7 @@ def render_template(cluster_id):
     offset = get_npy_video_offset(source_path)
     absolute_video_frame = frame_idx + offset
     
-    controls = build_video_control_props(video_metadata, frame_idx)
+    controls = build_video_control_props(video_metadata, absolute_video_frame)
 
     if video_metadata:
         frame_src, frame_error = encode_video_frame(video_metadata["path"], absolute_video_frame)
@@ -667,41 +639,16 @@ def render_template(cluster_id):
     
     return (
         fig, info_text, j_val, s_val, t_val, u_val, camera_options, camera_value, video_store, status, frame_src,
-        controls["range_min"], controls["range_max"], controls["range_value"], controls["range_marks"], controls["range_disabled"],
         controls["frame_min"], controls["frame_max"], controls["frame_value"], controls["frame_marks"], controls["frame_disabled"],
     )
 
 
-@app.callback(
-    [Output('template-video-frame-slider', 'min', allow_duplicate=True),
-     Output('template-video-frame-slider', 'max', allow_duplicate=True),
-     Output('template-video-frame-slider', 'value', allow_duplicate=True),
-     Output('template-video-frame-slider', 'marks', allow_duplicate=True)],
-    Input('template-video-range-slider', 'value'),
-    State('template-video-frame-slider', 'value'),
-    prevent_initial_call=True
-)
-def sync_video_frame_slider(frame_range, current_frame):
-    if not frame_range or len(frame_range) != 2:
-        return 0, 1, 0, {0: '0', 1: '1'}
-
-    start, end = sorted([int(frame_range[0]), int(frame_range[1])])
-    if start == end:
-        end = start + 1
-    value = int(current_frame or start)
-    value = max(start, min(value, end))
-    return start, end, value, {start: str(start), value: f"当前 {value}", end: str(end)}
 
 
 @app.callback(
     [Output('template-video-store', 'data', allow_duplicate=True),
      Output('template-video-status', 'children', allow_duplicate=True),
      Output('template-video-frame', 'src', allow_duplicate=True),
-     Output('template-video-range-slider', 'min', allow_duplicate=True),
-     Output('template-video-range-slider', 'max', allow_duplicate=True),
-     Output('template-video-range-slider', 'value', allow_duplicate=True),
-     Output('template-video-range-slider', 'marks', allow_duplicate=True),
-     Output('template-video-range-slider', 'disabled', allow_duplicate=True),
      Output('template-video-frame-slider', 'min', allow_duplicate=True),
      Output('template-video-frame-slider', 'max', allow_duplicate=True),
      Output('template-video-frame-slider', 'value', allow_duplicate=True),
@@ -717,23 +664,23 @@ def update_video_camera(camera, video_store, current_frame):
         controls = build_video_control_props(None, 0)
         return (
             {}, "无展示数据。", VIDEO_PLACEHOLDER,
-            controls["range_min"], controls["range_max"], controls["range_value"], controls["range_marks"], controls["range_disabled"],
             controls["frame_min"], controls["frame_max"], controls["frame_value"], controls["frame_marks"], controls["frame_disabled"],
         )
 
     source_path = video_store.get("source_path")
     source_file = video_store.get("source_file")
-    frame_idx = int(current_frame if current_frame is not None else video_store.get("frame_idx", 0) or 0)
     camera = camera or "cam_1"
-
     video_path = resolve_video_path(source_path, source_file, camera)
     video_metadata, video_error = get_video_metadata(video_path)
-    
-    # 获取对齐偏移
     offset = get_npy_video_offset(source_path)
-    absolute_video_frame = frame_idx + offset
+
+    # 如果已经有滑块位置(绝对帧)，则保持；否则由 npy 参考帧 + offset 初始化
+    if current_frame is not None:
+        absolute_video_frame = int(current_frame)
+    else:
+        absolute_video_frame = int(video_store.get("frame_idx", 0) or 0) + offset
     
-    controls = build_video_control_props(video_metadata, frame_idx)
+    controls = build_video_control_props(video_metadata, absolute_video_frame)
 
     if video_metadata:
         safe_frame = max(0, min(absolute_video_frame, video_metadata["frame_count"] - 1))
@@ -763,7 +710,6 @@ def update_video_camera(camera, video_store, current_frame):
     }
     return (
         next_store, status, frame_src,
-        controls["range_min"], controls["range_max"], controls["range_value"], controls["range_marks"], controls["range_disabled"],
         controls["frame_min"], controls["frame_max"], controls["frame_value"], controls["frame_marks"], controls["frame_disabled"],
     )
 
@@ -780,8 +726,9 @@ def update_video_frame(frame_idx, video_metadata):
         return VIDEO_PLACEHOLDER, "未找到同源视频。"
 
     metadata = video_metadata["metadata"]
+    # 进度条现在使用视频绝对帧坐标，不再重复加 offset
+    absolute_video_frame = int(frame_idx or 0)
     offset = video_metadata.get("offset", 0)
-    absolute_video_frame = int(frame_idx or 0) + offset
     
     safe_frame = max(0, min(absolute_video_frame, metadata["frame_count"] - 1))
     frame_src, error = encode_video_frame(metadata["path"], safe_frame)
