@@ -23,6 +23,11 @@ H36M_CONNECTIONS = [
     (7, 8), (8, 9), (8, 11), (8, 14), (9, 10), (11, 12),
     (12, 13), (14, 15), (15, 16)
 ]
+FOOT_MARKERS = ["RHEL", "R_Toe", "RBAM", "RMT5", "LHEL", "L_Toe", "LBAM", "LMT5"]
+FOOT_CONNECTIONS = [
+    (3, "RHEL"), ("RHEL", "R_Toe"), ("R_Toe", "RMT5"), ("RMT5", "RBAM"), ("RBAM", "RHEL"), (3, "R_Toe"),
+    (6, "LHEL"), ("LHEL", "L_Toe"), ("L_Toe", "LMT5"), ("LMT5", "LBAM"), ("LBAM", "LHEL"), (6, "L_Toe"),
+]
 
 # ======= 动作字典常量 =======
 JUMP_TYPES = [
@@ -217,6 +222,102 @@ def get_npy_video_offset(source_path):
     return t_start
 
 
+def resolve_json_path(source_path):
+    if not source_path:
+        return None
+
+    parts = list(Path(str(source_path).replace("\\", os.sep).replace("/", os.sep)).parts)
+    lower_parts = [x.lower() for x in parts]
+    if "npy" not in lower_parts:
+        return None
+
+    parts[lower_parts.index("npy")] = "json"
+    json_path = Path(*parts).with_suffix(".json")
+    if not json_path.is_absolute():
+        json_path = PROJECT_ROOT / json_path
+    return json_path
+
+
+def _main_marker_part(marker):
+    parts = marker.get("Parts", [])
+    if not parts:
+        return None, 0
+
+    def part_len(part):
+        frame_range = part.get("Range", {})
+        return frame_range.get("End", 0) - frame_range.get("Start", 0)
+
+    main_part = max(parts, key=part_len)
+    start = int(main_part.get("Range", {}).get("Start", 1)) - 1
+    return main_part, start
+
+
+def _align_extra_points(points, raw_pose, aligned_pose):
+    hip = raw_pose[0]
+    centered = points - hip
+    v_hip = raw_pose[4] - raw_pose[1]
+    v_hip_xy = np.array([v_hip[0], v_hip[1], 0])
+    norm = np.linalg.norm(v_hip_xy)
+    if norm >= 1e-6:
+        v_hip_norm = v_hip_xy / norm
+        theta = np.arctan2(v_hip_norm[1], v_hip_norm[0])
+        c, s = np.cos(-theta), np.sin(-theta)
+        rotation = np.array([
+            [c, -s, 0],
+            [s, c, 0],
+            [0, 0, 1]
+        ])
+        centered = centered @ rotation.T
+
+    raw_len = np.linalg.norm(raw_pose[9] - raw_pose[0])
+    aligned_len = np.linalg.norm(aligned_pose[9] - aligned_pose[0])
+    if raw_len > 1e-6 and aligned_len > 1e-6:
+        centered = centered * (aligned_len / raw_len)
+    return centered
+
+
+def load_foot_points(source_path, frame_idx, aligned_pose):
+    json_path = resolve_json_path(source_path)
+    if not json_path or not json_path.exists():
+        return {}
+
+    try:
+        npy_path = _normalize_candidate(source_path)
+        raw_data = np.load(npy_path)
+        safe_frame = max(0, min(int(frame_idx or 0), raw_data.shape[0] - 1))
+        raw_pose = raw_data[safe_frame]
+
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        json_frame = get_npy_video_offset(source_path) + safe_frame
+        marker_by_name = {marker.get("Name"): marker for marker in data.get("Markers", [])}
+        names = []
+        points = []
+        for name in FOOT_MARKERS:
+            marker = marker_by_name.get(name)
+            if not marker:
+                continue
+            part, part_start = _main_marker_part(marker)
+            if not part:
+                continue
+            values = part.get("Values", [])
+            value_idx = json_frame - part_start
+            if value_idx < 0 or value_idx >= len(values):
+                continue
+            names.append(name)
+            points.append(values[value_idx][:3])
+
+        if not points:
+            return {}
+
+        aligned_points = _align_extra_points(np.asarray(points, dtype=float), raw_pose, aligned_pose)
+        return {name: point for name, point in zip(names, aligned_points)}
+    except Exception as e:
+        print(f"读取脚部 marker 失败: {e}")
+        return {}
+
+
 def resolve_video_path(source_path=None, source_file=None, camera="cam_1"):
     candidates = []
     skater = _skater_from_source_path(source_path)
@@ -359,7 +460,7 @@ def align_skeleton(frame):
     return aligned
 
 # 生成 3D 图形的通用 Helper
-def create_pose_figure(aligned_pose, title="动作展示", color='red'):
+def create_pose_figure(aligned_pose, title="动作展示", color='red', extra_points=None):
     if aligned_pose is None or len(aligned_pose) == 0:
         fig = go.Figure()
         fig.update_layout(title=title, scene=dict(aspectmode='cube'))
@@ -383,8 +484,41 @@ def create_pose_figure(aligned_pose, title="动作展示", color='red'):
             x=x, y=y, z=z, mode='lines', 
             line=dict(color=color, width=5), showlegend=False
         ))
-        
-    fig = go.Figure(data=[joints_scatter] + bones_lines)
+
+    extra_traces = []
+    extra_points = extra_points or {}
+    if extra_points:
+        names = list(extra_points.keys())
+        pts = np.asarray([extra_points[name] for name in names], dtype=float)
+        extra_traces.append(go.Scatter3d(
+            x=pts[:, 0], y=pts[:, 1], z=pts[:, 2],
+            mode='markers+text',
+            marker=dict(size=5, color='#ff922b'),
+            text=names,
+            textposition="top center",
+            name='脚部 marker'
+        ))
+        for start_j, end_j in FOOT_CONNECTIONS:
+            if isinstance(start_j, int):
+                start_point = aligned_pose[start_j]
+            else:
+                start_point = extra_points.get(start_j)
+            if isinstance(end_j, int):
+                end_point = aligned_pose[end_j]
+            else:
+                end_point = extra_points.get(end_j)
+            if start_point is None or end_point is None:
+                continue
+            extra_traces.append(go.Scatter3d(
+                x=[start_point[0], end_point[0], None],
+                y=[start_point[1], end_point[1], None],
+                z=[start_point[2], end_point[2], None],
+                mode='lines',
+                line=dict(color='#ff922b', width=3),
+                showlegend=False
+            ))
+
+    fig = go.Figure(data=[joints_scatter] + bones_lines + extra_traces)
     ax_range = 1000
     fig.update_layout(
         title=title,
@@ -588,11 +722,14 @@ def render_template(cluster_id):
     source_file = data.get('source_file', '未知')
     frame_idx = int(data.get('frame_idx', 0) or 0)
     
-    fig = create_pose_figure(skeleton, title=f"选定模型 - ID {cluster_id}", color='deepskyblue')
+    foot_points = load_foot_points(source_path, frame_idx, skeleton)
+    fig = create_pose_figure(skeleton, title=f"选定模型 - ID {cluster_id}", color='deepskyblue', extra_points=foot_points)
     
     info_text = f"📍 模板标识: 【 {data.get('label', '未标注')} 】\n"
     info_text += f"📂 萃取来源: {source_file}\n"
     info_text += f"🎞️ 所在原帧: 第 {frame_idx} 帧\n"
+    if foot_points:
+        info_text += f"🦶 脚部 marker: 已加载 {len(foot_points)} 个\n"
     
     metadata = data.get('metadata', {})
     j_val = metadata.get('jump_type', None)

@@ -9,6 +9,48 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from npy_loader import normalize_skeleton
 from sklearn.metrics import pairwise_distances_argmin_min
 
+
+def _configure_stdio():
+    """Windows 默认 GBK 控制台无法输出 emoji，启动时尽量切到 UTF-8。"""
+    if sys.platform != "win32":
+        return
+    for stream in (sys.stdout, sys.stderr):
+        if stream is None:
+            continue
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
+_configure_stdio()
+
+
+def safe_print(*args, **kwargs):
+    """避免 Windows GBK 控制台因 emoji/特殊字符导致 UnicodeEncodeError。"""
+    end = kwargs.pop("end", "\n")
+    flush = kwargs.pop("flush", False)
+    file = kwargs.pop("file", sys.stdout)
+    text = " ".join(str(arg) for arg in args)
+    payload = (text + end).encode("utf-8", errors="replace")
+    buf = getattr(file, "buffer", None)
+    if buf is not None:
+        buf.write(payload)
+        if flush:
+            buf.flush()
+        return
+    try:
+        file.write(text + end)
+        if flush:
+            file.flush()
+    except UnicodeEncodeError:
+        file.write(payload.decode("utf-8", errors="replace"))
+        if flush:
+            file.flush()
+
 import plotly.graph_objects as go
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
@@ -28,6 +70,16 @@ H36M_CONNECTIONS = [
     (7, 8), (8, 9), (8, 11), (8, 14), (9, 10), (11, 12),
     (12, 13), (14, 15), (15, 16)
 ]
+ORIGINAL84_CONNECTIONS = [
+    (0, 4), (4, 9), (9, 15), (15, 18), (18, 19), (19, 21), (21, 20), (20, 18), (15, 19),
+    (0, 22), (22, 27), (27, 33), (33, 36), (36, 37), (37, 39), (39, 38), (38, 36), (33, 37),
+    (0, 40), (40, 41), (40, 45), (45, 46), (45, 48), (48, 52),
+    (45, 53), (53, 58), (58, 62), (62, 65), (65, 66), (65, 67),
+    (45, 68), (68, 73), (73, 77), (77, 80), (80, 81), (80, 82),
+]
+RIG_MODE = os.environ.get("ACTION_EXPLORER_RIG_MODE", "h36m17")
+DATA_ROOT = os.environ.get("ACTION_EXPLORER_DATA_ROOT", "./data/npy_original84" if RIG_MODE == "original84" else "./data/npy")
+RUN_TSNE = os.environ.get("ACTION_EXPLORER_RUN_TSNE", "1") != "0"
 
 # --- 1. 数据处理与特性工程 ---
 
@@ -73,7 +125,55 @@ def align_skeleton(frame):
     
     return aligned
 
-def load_and_process_data(root_dir='./data/npy'):
+def align_original84_frame(frame):
+    """
+    ORIGINAL 84 marker 专用预处理：
+    1. 使用 PELVIS(0) 中心化。
+    2. 使用 RASI(4) 与 LASI(22) 的骨盆横轴做朝向对齐。
+    3. 使用 PELVIS(0) -> CLAV(45) 做整体尺度归一化。
+    """
+    frame = np.asarray(frame, dtype=np.float64)
+    hip = frame[0]
+    centered = frame - hip
+
+    v_hip = centered[22] - centered[4]
+    v_hip_xy = np.array([v_hip[0], v_hip[1], 0.0])
+    norm = np.linalg.norm(v_hip_xy)
+    if norm >= 1e-6:
+        v_hip_norm = v_hip_xy / norm
+        theta = np.arctan2(v_hip_norm[1], v_hip_norm[0])
+        c, s = np.cos(-theta), np.sin(-theta)
+        rotation = np.array([
+            [c, -s, 0.0],
+            [s, c, 0.0],
+            [0.0, 0.0, 1.0]
+        ])
+        centered = centered @ rotation.T
+
+    torso_len = np.linalg.norm(centered[45] - centered[0])
+    if torso_len > 1e-6:
+        centered = centered * (510.6 / torso_len)
+    return centered
+
+
+def align_frame_by_mode(frame, rig_mode):
+    if rig_mode == "original84":
+        return align_original84_frame(frame)
+    return align_skeleton(frame)
+
+
+def pose_connections_by_mode(rig_mode):
+    if rig_mode == "original84":
+        return ORIGINAL84_CONNECTIONS
+    return H36M_CONNECTIONS
+
+
+def pose_labels_by_mode(joint_count, rig_mode):
+    if rig_mode == "original84":
+        return [str(i) for i in range(joint_count)]
+    return [str(i) for i in range(min(17, joint_count))]
+
+def load_and_process_data(root_dir=DATA_ROOT, rig_mode=RIG_MODE):
     """
     加载 .npy 数据，执行对齐，并使用 t-SNE 进行降维映射。
     支持两种输入：
@@ -83,25 +183,26 @@ def load_and_process_data(root_dir='./data/npy'):
     all_frames = []
     metadata = []  # 存储每帧的元数据：文件名、帧号、完整路径、运动员ID
     
-    print("正在加载并对齐数据...")
+    safe_print(f"正在加载并对齐数据... rig_mode={rig_mode}, root_dir={root_dir}")
     files_processed = 0
     start_time = time.time()
     
     def process_single_file(path):
         """处理单个 .npy 文件"""
         nonlocal files_processed
-        data = np.load(path)  # shape: (总帧数, 17个关节, 3个坐标)
+        data = np.load(path)  # shape: (总帧数, 关节数, 3个坐标)
         filename = os.path.basename(path)
         
         # 遍历文件中的每一帧进行预处理
         for i in range(data.shape[0]):
             frame = data[i]
-            aligned = align_skeleton(frame)
+            aligned = align_frame_by_mode(frame, rig_mode)
             
             # 路径解析逻辑：根据文件夹结构提取运动员名称
             path_parts = os.path.normpath(path).split(os.sep)
             try:
-                npy_index = path_parts.index('npy')
+                root_name = 'npy_original84' if rig_mode == "original84" else 'npy'
+                npy_index = path_parts.index(root_name)
                 skater_name = path_parts[npy_index + 1]
             except ValueError:
                 skater_name = 'Unknown'
@@ -127,36 +228,41 @@ def load_and_process_data(root_dir='./data/npy'):
                     path = os.path.join(root, f)
                     process_single_file(path)
     else:
-        print(f"错误：路径不存在或不是有效的 .npy 文件/目录: {root_dir}")
+        safe_print(f"错误：路径不存在或不是有效的 .npy 文件/目录: {root_dir}")
         return pd.DataFrame()
 
-    print(f"数据加载完成。处理了 {files_processed} 个文件，共 {len(all_frames)} 帧。耗时: {time.time()-start_time:.2f}s")
+    safe_print(f"数据加载完成。处理了 {files_processed} 个文件，共 {len(all_frames)} 帧。耗时: {time.time()-start_time:.2f}s")
     
     X = np.array(all_frames)
     
     # 降维处理第一步：PCA 降噪
     # 作用：自动压缩维度，并保留 95% 以上的核心方差，同时极大地加速和去噪。
-    print("正在执行 PCA 降噪...")
-    pca = PCA(n_components=0.95)
+    safe_print("正在执行 PCA 降噪...")
+    pca_components = min(0.95, X.shape[0] - 1) if X.shape[0] <= 2 else 0.95
+    pca = PCA(n_components=pca_components)
     X_pca = pca.fit_transform(X)
-    print(f"PCA 已将维度压缩至 {X_pca.shape[1]} 维。")
+    safe_print(f"PCA 已将维度压缩至 {X_pca.shape[1]} 维。")
     
     # 降维处理第二步：t-SNE 降维至 3D 空间
     # 作用：捕捉高维特征中的非线性结构（聚类团块），使结果利于 3D 可视化。
-    print("正在执行 t-SNE 降维 (这可能需要几分钟重新计算)...")
-    # TSNE设定的核心参数被调优：
-    # perplexity=80: 信息熵更大，更适应7万大数据量的团簇分布
-    tsne = TSNE(
-        n_components=3, 
-        perplexity=80, 
-        max_iter=1500, 
-        init='pca', 
-        learning_rate='auto', 
-        early_exaggeration=20,   
-        verbose=2)
-    
-    X_embedded = tsne.fit_transform(X_pca)
-    print("t-SNE 降维计算完成。")
+    if RUN_TSNE and X_pca.shape[0] > 3:
+        safe_print("正在执行 t-SNE 降维 (这可能需要几分钟重新计算)...")
+        perplexity = min(80, max(2, X_pca.shape[0] - 1))
+        tsne = TSNE(
+            n_components=3,
+            perplexity=perplexity,
+            max_iter=1500,
+            init='pca',
+            learning_rate='auto',
+            early_exaggeration=20,
+            verbose=2)
+        X_embedded = tsne.fit_transform(X_pca)
+        safe_print("t-SNE 降维计算完成。")
+    else:
+        safe_print("跳过 t-SNE，使用 PCA 前 3 维作为预览坐标。")
+        X_embedded = np.zeros((X_pca.shape[0], 3))
+        cols = min(3, X_pca.shape[1])
+        X_embedded[:, :cols] = X_pca[:, :cols]
     
     # 将降维后的坐标添加到元数据 DataFrame
     df = pd.DataFrame(metadata)
@@ -169,23 +275,26 @@ def load_and_process_data(root_dir='./data/npy'):
 
 # --- 2. 缓存管理 ---
 # 为了避免每次启动都耗费几分钟计算特征转换，我们将结果全量缓存
-CACHE_FILE = 'output/action_space_cache.csv'
-PCA_CACHE_FILE = 'output/action_space_cache_pca.npy'
+CACHE_SUFFIX = "_original84" if RIG_MODE == "original84" else ""
+CACHE_FILE = f'output/action_space_cache{CACHE_SUFFIX}.csv'
+PCA_CACHE_FILE = f'output/action_space_cache_pca{CACHE_SUFFIX}.npy'
+TEMPLATE_FILE = f'output/action_templates{CACHE_SUFFIX}.json'
+EXPORT_DIR = f"output/结果导出{CACHE_SUFFIX}"
 
 # 确保输出目录存在
 if not os.path.exists('output'):
     os.makedirs('output')
 
 if os.path.exists(CACHE_FILE) and os.path.exists(PCA_CACHE_FILE):
-    print(f"检测到缓存文件 {CACHE_FILE} 与特征阵，正在快速加载...")
+    safe_print(f"检测到缓存文件 {CACHE_FILE} 与特征阵，正在快速加载...")
     df = pd.read_csv(CACHE_FILE)
     PCA_FEATURES = np.load(PCA_CACHE_FILE)
 else:
-    df, PCA_FEATURES = load_and_process_data()
+    df, PCA_FEATURES = load_and_process_data(DATA_ROOT, RIG_MODE)
     # 首次计算后自动导出缓存
     df.to_csv(CACHE_FILE, index=False)
     np.save(PCA_CACHE_FILE, PCA_FEATURES)
-    print(f"分析结果及其高维抽象已保存至 output/ 目录下。")
+    safe_print(f"分析结果及其高维抽象已保存至 output/ 目录下。")
 
 # --- 3. Dash 应用布局与交互 ---
 
@@ -294,7 +403,7 @@ def update_clustering(n_clicks, k):
     if n_clicks == 0:
         return dash.no_update, ""
     
-    print(f"正在对 3D 映射空间执行 K-Means (K={k})...")
+    safe_print(f"正在对 3D 映射空间执行 K-Means (K={k})...")
     start_t = time.time()
     
     # 使用更高维度的抽象特征来取代 3D 挤压坐标，大幅度增强细微切割精度
@@ -305,7 +414,7 @@ def update_clustering(n_clicks, k):
     
     new_fig = generate_scatter_figure(df, labels)
     msg = f"聚类成功 (K={k})！由于数据已降维，计算耗时仅为 {time.time()-start_t:.2f}s"
-    print(msg)
+    safe_print(msg)
 
     return new_fig, msg
 
@@ -325,62 +434,62 @@ def save_clustering_result(n_clicks, k):
     """
     if n_clicks == 0:
         return dash.no_update
-    
-    print(f"正在导出结果至文件夹 (K={k})...")
-    
-    # 1. 计算标签
-    features_for_clustering = PCA_FEATURES
-    kmeans = KMeans(n_clusters=k, random_state=42, n_init='auto')
-    labels = kmeans.fit_predict(features_for_clustering)
-    
-    # 2. 准备导出目录
-    export_dir = "output/结果导出"
-    if not os.path.exists(export_dir):
-        os.makedirs(export_dir)
-    
-    # 3. 按类保存
-    for cluster_id in range(k):
-        # 筛选属于该类的行
-        mask = (labels == cluster_id)
-        cluster_df = df[mask][['skater', 'file', 'frame']]
-        
-        # 保存为 CSV
-        file_path = os.path.join(export_dir, f"{cluster_id}.csv")
-        cluster_df.to_csv(file_path, index=False)
-        
-    print("正在构建标准化动作模板核心骨架...")
+
     try:
+        safe_print(f"正在导出结果至文件夹 (K={k})...")
+
+        # 1. 计算标签
+        features_for_clustering = PCA_FEATURES
+        kmeans = KMeans(n_clusters=k, random_state=42, n_init='auto')
+        labels = kmeans.fit_predict(features_for_clustering)
+
+        # 2. 准备导出目录
+        export_dir = EXPORT_DIR
+        if not os.path.exists(export_dir):
+            os.makedirs(export_dir)
+
+        # 3. 按类保存
+        for cluster_id in range(k):
+            mask = (labels == cluster_id)
+            cluster_df = df[mask][['skater', 'file', 'frame']]
+            file_path = os.path.join(export_dir, f"{cluster_id}.csv")
+            cluster_df.to_csv(file_path, index=False)
+
+        safe_print("正在构建标准化动作模板核心骨架...")
+        template_file = TEMPLATE_FILE
         centers = kmeans.cluster_centers_
         closest_indices, _ = pairwise_distances_argmin_min(centers, features_for_clustering)
-        
+
         templates_data = {}
         for c_id, idx in enumerate(closest_indices):
             target_info = df.iloc[idx]
             pose_data = np.load(target_info['path'])
             frame_idx = int(target_info['frame'])
             raw_pose = pose_data[frame_idx]
-            
-            # 使用跟之前相同的大清洗方法处理
-            aligned_pose = align_skeleton(raw_pose)  
-            
+            aligned_pose = align_frame_by_mode(raw_pose, RIG_MODE)
+
             templates_data[str(c_id)] = {
                 "cluster_id": c_id,
-                "label": str(c_id), # 默认按类数字填充类别描述名
-                "source_file": target_info['file'],
+                "label": str(c_id),
+                "rig_mode": RIG_MODE,
+                "joint_count": int(aligned_pose.shape[0]),
+                "source_file": str(target_info['file']),
                 "frame_idx": frame_idx,
-                "source_path": target_info['path'],
-                "skeleton": aligned_pose.tolist() 
+                "source_path": str(target_info['path']),
+                "skeleton": aligned_pose.tolist()
             }
-            
-        template_file = os.path.join("output", "action_templates.json")
+
         with open(template_file, "w", encoding="utf-8") as f:
             json.dump(templates_data, f, ensure_ascii=False, indent=4)
-            
-        print(f"✔️ 标准字典提取成功：{template_file}")
+
+        safe_print(f"[OK] template saved: {template_file}")
+        return (
+            f"已成功导出 {k} 个分类文件至“{export_dir}”文件夹，"
+            f"并创建模板动作字典库：{template_file}"
+        )
     except Exception as e:
-        print(f"❌ 模板抽取发生错误: {e}")
-        
-    return f"✔️ 已成功导出 {k} 个分类文件至“{export_dir}”文件夹，并创建模板动作字典库。"
+        safe_print(f"[ERROR] save failed: {type(e).__name__}: {e!r}")
+        return f"保存失败: {type(e).__name__}: {e}"
 
 # 逻辑回调 3：K 值评估分析
 @app.callback(
@@ -400,7 +509,7 @@ def analyze_k_value(n_clicks):
     if n_clicks == 0:
         return dash.no_update, {'display': 'none'}, {'display': 'block'}
     
-    print("开始分析 K 值趋势 (这可能需要几分钟)...")
+    safe_print("开始分析 K 值趋势 (这可能需要几分钟)...")
     features_for_clustering = PCA_FEATURES
     
     k_range = range(8, 51)
@@ -415,7 +524,7 @@ def analyze_k_value(n_clicks):
         # 记录指标
         inertias.append(kmeans.inertia_)
         silhouettes.append(silhouette_score(features_for_clustering, labels)) # 全量高维计算
-        print(f"完成 K={k} 的计算...")
+        safe_print(f"完成 K={k} 的计算...")
         
     # 创建双坐标轴图表
     fig = make_subplots(specs=[[{"secondary_y": True}]])
@@ -481,22 +590,26 @@ def update_pose_preview(hoverData):
         frame_idx = int(target_info['frame'])
         raw_pose = pose_data[frame_idx]
         
-        # 对预览骨架同样执行“对齐”操作
-        aligned_pose = align_skeleton(raw_pose) 
+        # 对预览骨架同样执行对应模式的“对齐”操作
+        aligned_pose = align_frame_by_mode(raw_pose, RIG_MODE)
+        connections = pose_connections_by_mode(RIG_MODE)
+        labels = pose_labels_by_mode(aligned_pose.shape[0], RIG_MODE)
         
-        # 渲染关节点（编号 0-16）
+        # 渲染关节点
         joints_scatter = go.Scatter3d(
             x=aligned_pose[:, 0], y=aligned_pose[:, 1], z=aligned_pose[:, 2],
             mode='markers+text',
-            marker=dict(size=2, color='black'),
-            text=[str(i) for i in range(17)],
+            marker=dict(size=2 if RIG_MODE == "original84" else 4, color='black'),
+            text=labels,
             textposition="top center",
             name='关节点'
         )
         
         # 渲染人体拓扑连线
         bones_lines = []
-        for start_j, end_j in H36M_CONNECTIONS:
+        for start_j, end_j in connections:
+            if start_j >= aligned_pose.shape[0] or end_j >= aligned_pose.shape[0]:
+                continue
             x = [aligned_pose[start_j, 0], aligned_pose[end_j, 0], None]
             y = [aligned_pose[start_j, 1], aligned_pose[end_j, 1], None]
             z = [aligned_pose[start_j, 2], aligned_pose[end_j, 2], None]
@@ -523,11 +636,11 @@ def update_pose_preview(hoverData):
         return fig, {'height': '85vh', 'display': 'block'}, {'display': 'none'}
         
     except Exception as err:
-        print(f"预览加载失败: {err}")
+        safe_print(f"预览加载失败: {err}")
         return dash.no_update, dash.no_update, dash.no_update
 
 if __name__ == '__main__':
-    print("应用即将启动，正在通过本地服务器加载...")
-    print("提示：请在浏览器中访问 http://127.0.0.1:8050 查看可视化界面。")
+    safe_print("应用即将启动，正在通过本地服务器加载...")
+    safe_print("提示：请在浏览器中访问 http://127.0.0.1:8050 查看可视化界面。")
     # 设置 use_reloader=False 避免在某些 IDE 环境下出现两次计算进程
     app.run(debug=True, use_reloader=False)

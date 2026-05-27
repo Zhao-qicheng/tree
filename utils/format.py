@@ -75,7 +75,7 @@ def apply_rig_format(pose3d: np.ndarray, joint_names: List[str], marker_idxs: Li
     return formatted_pose3d
 
 
-def process_file(json_file: Path, rig_file: str, rig_name: str):
+def process_file(json_file: Path, rig_file: str, rig_name: str, output_root: Path):
     print(f"Converting {json_file} ...")
     marker_data = get_marker_data(json_file)
     time_range = get_time_range(marker_data)
@@ -84,9 +84,13 @@ def process_file(json_file: Path, rig_file: str, rig_name: str):
     formatted_pose3d = apply_rig_format(pose3d, joint_names, marker_idxs)
     
     # Prepare output directory
-    dir_parts = list(json_file.parent.parts)
-    dir_parts = ['npy' if dp == 'json' else dp for dp in dir_parts]
-    output_dir = Path(*dir_parts)
+    json_parts = list(json_file.parent.parts)
+    lower_parts = [part.lower() for part in json_parts]
+    if "json" in lower_parts:
+        rel_parts = json_parts[lower_parts.index("json") + 1:]
+    else:
+        rel_parts = list(json_file.parent.parts)
+    output_dir = output_root / Path(*rel_parts)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Save the formatted pose3d array
@@ -98,21 +102,25 @@ def main():
     # parser
     parser = ArgumentParser()
     parser.add_argument("--rig", type=str, default='Human3.6M', help="Rig mapping to use")
+    parser.add_argument("--input-root", type=Path, default=Path("./data/json"), help="JSON 数据根目录")
+    parser.add_argument("--output-root", type=Path, default=None, help="NPY 输出根目录")
     args = parser.parse_args()
+    output_root = args.output_root or (Path("./data/npy_original84") if args.rig == "ORIGINAL" else Path("./data/npy"))
     
     skaters = ['Skater_A', 'Skater_B', 'Skater_C', 'Skater_D']
     jumps = ['Axel', 'Comb', 'Flip', 'Lutz', 'Salchow', 'Loop', 'Toeloop']
 
-    files = [Path(f'./data/json/{skater}/{jump}/{f}')
+    files = [args.input_root / skater / jump / f
              for skater in skaters
              for jump in jumps
-             for f in os.listdir(f'./data/json/{skater}/{jump}') if f.endswith('.json')]
+             if (args.input_root / skater / jump).exists()
+             for f in os.listdir(args.input_root / skater / jump) if f.endswith('.json')]
 
     rig_file = './utils/rig.json'
     for json_file in files:
-        process_file(json_file, rig_file, args.rig)
+        process_file(json_file, rig_file, args.rig, output_root)
 
-    print("Successfully converted all JSON files.")
+    print(f"Successfully converted all JSON files to {output_root}.")
 
 if __name__ == '__main__':
     main()
