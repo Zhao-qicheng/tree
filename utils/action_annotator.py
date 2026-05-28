@@ -672,7 +672,14 @@ def update_preview(jump, stage, temporal, units):
     j_str = jump if jump else "?"
     s_str = stage if stage else "?"
     t_str = temporal if temporal else "S"
-    u_str = "[" + ",".join(units) + "]" if units else "[]"
+    
+    # 💡 改进：按 H, T, L, R, l, r 顺序排序
+    if units:
+        order = {'H': 0, 'T': 1, 'L': 2, 'R': 3, 'l': 4, 'r': 5}
+        sorted_units = sorted(units, key=lambda x: (order.get(x[0], 99), int(x[1:]) if x[1:].isdigit() else 0))
+        u_str = "[" + ",".join(sorted_units) + "]"
+    else:
+        u_str = "[]"
     
     preview_text = f"{j_str}-{s_str}-{t_str}-{u_str}"
     return f"🏷️ 预览编码格式: {preview_text}"
@@ -916,7 +923,14 @@ def save_custom_label(n_clicks, cid, jump, stage, temporal, units, camera):
     j_str = jump
     s_str = stage
     t_str = temporal if temporal else "S"
-    u_str = "[" + ",".join(units) + "]" if units else "[]"
+    
+    # 💡 改进：保存时也进行自动排序
+    if units:
+        order = {'H': 0, 'T': 1, 'L': 2, 'R': 3, 'l': 4, 'r': 5}
+        sorted_units = sorted(units, key=lambda x: (order.get(x[0], 99), int(x[1:]) if x[1:].isdigit() else 0))
+        u_str = "[" + ",".join(sorted_units) + "]"
+    else:
+        u_str = "[]"
     
     new_label = f"{j_str}-{s_str}-{t_str}-{u_str}"
     
