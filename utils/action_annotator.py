@@ -469,7 +469,7 @@ def create_pose_figure(aligned_pose, title="动作展示", color='red', extra_po
     joints_scatter = go.Scatter3d(
         x=aligned_pose[:, 0], y=aligned_pose[:, 1], z=aligned_pose[:, 2],
         mode='markers+text',
-        marker=dict(size=4, color='black'),
+        marker=dict(size=2, color='black'),
         text=[str(i) for i in range(17)],
         textposition="top center",
         name='关节点'
@@ -492,8 +492,8 @@ def create_pose_figure(aligned_pose, title="动作展示", color='red', extra_po
         pts = np.asarray([extra_points[name] for name in names], dtype=float)
         extra_traces.append(go.Scatter3d(
             x=pts[:, 0], y=pts[:, 1], z=pts[:, 2],
-            mode='markers+text',
-            marker=dict(size=5, color='#ff922b'),
+            mode='markers', # 'markers+text'删去text脚步节点名称的介绍
+            marker=dict(size=2, color='#ff922b'),
             text=names,
             textposition="top center",
             name='脚部 marker'
@@ -644,22 +644,16 @@ app.layout = html.Div([
 
 # ======= 回调大厅：读取选项与展示 =======
 @app.callback(
-    [Output('template-dropdown', 'options'),
-     Output('template-dropdown', 'value')],
-    Input('template-dropdown', 'id') # 这个假的触发器让它每次页面载入时查一次库
+    Output('template-dropdown', 'options'),
+    Input('template-dropdown', 'id') 
 )
-def initialize_dropdown(_):
+def initialize_dropdown_options(_):
     db = load_db()
     if not db:
-        return [], None
-    
-    options = []
-    # 按照ID排序展示
-    for cid in sorted(db.keys(), key=lambda x: int(x)):
-        info = db[cid]
-        options.append({'label': f"簇 {cid} ({info['label']})", 'value': cid})
-        
-    return options, list(db.keys())[0]
+        return []
+    options = [{'label': f"簇 {cid} ({db[cid]['label']})", 'value': cid} 
+               for cid in sorted(db.keys(), key=lambda x: int(x))]
+    return options
 
 # 实时预览回调
 @app.callback(
@@ -733,6 +727,18 @@ def render_template(cluster_id):
     
     metadata = data.get('metadata', {})
     j_val = metadata.get('jump_type', None)
+    
+    # --- 💡 极速标注改进：根据路径智能推断 ---
+    if not j_val and source_path:
+        path_str = str(source_path).lower()
+        if 'axel' in path_str: j_val = "A"
+        elif 'toeloop' in path_str: j_val = "T"
+        elif 'loop' in path_str: j_val = "Lo"
+        elif 'salchow' in path_str: j_val = "S"
+        elif 'flip' in path_str: j_val = "F"
+        elif 'lutz' in path_str: j_val = "Lz"
+    # ------------------------------------
+
     s_val = metadata.get('stage', None)
     t_val = metadata.get('temporal_flag', "S")
     u_val = metadata.get('action_units', [])
@@ -879,9 +885,10 @@ def update_video_frame(frame_idx, video_metadata):
         status += f"\n{error}"
     return frame_src, status
 
-# 修改保存动作
+# 修改保存动作：保存并自动跳转到下一个
 @app.callback(
-    Output('save-result-msg', 'children'),
+    [Output('save-result-msg', 'children'),
+     Output('template-dropdown', 'value')],
     Input('save-label-btn', 'n_clicks'),
     [State('template-dropdown', 'value'), 
      State('dropdown-jump-type', 'value'),
@@ -892,9 +899,12 @@ def update_video_frame(frame_idx, video_metadata):
 )
 def save_custom_label(n_clicks, cid, jump, stage, temporal, units):
     if not cid:
-        return "目标字典未选定！"
+        # 如果是首次加载且没有选中值，默认选第一个
+        db_init = load_db()
+        return "目标字典未选定！", list(db_init.keys())[0] if db_init else dash.no_update
+        
     if not jump or not stage:
-        return "⚠️ 跳跃类型和阶段划分为必填项！"
+        return "⚠️ 跳跃类型和阶段划分为必填项！", cid
         
     j_str = jump
     s_str = stage
@@ -913,8 +923,19 @@ def save_custom_label(n_clicks, cid, jump, stage, temporal, units):
             'action_units': units if units else []
         }
         save_db(db)
-        return f"已成功为字典 {cid} 指派新编码：【{new_label}】! 页面刷新后左侧列表变动。"
-    return "字典记录定位失败！"
+        
+        # 💡 极速标注改进：计算下一个 ID 以便通过控制 Output 实现跳转
+        all_ids = sorted(db.keys(), key=lambda x: int(x))
+        try:
+            curr_idx = all_ids.index(cid)
+            next_id = all_ids[curr_idx + 1] if curr_idx + 1 < len(all_ids) else cid
+            msg = f"✅ 已保存 {cid}。自动跳转至 {next_id}"
+            if next_id == cid: msg = "🎉 已全部标注完成！"
+            return msg, next_id
+        except:
+            return f"已成功保存 {cid}", cid
+            
+    return "字典记录定位失败！", cid
 
 # ======= 测试与单帧匹配回调 =======
 # 1. 载入滑块上限设定
