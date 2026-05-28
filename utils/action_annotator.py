@@ -36,7 +36,8 @@ JUMP_TYPES = [
     {"label": "Loop (Lo)", "value": "Lo"},
     {"label": "Salchow (S)", "value": "S"},
     {"label": "Flip (F)", "value": "F"},
-    {"label": "Lutz (Lz)", "value": "Lz"}
+    {"label": "Lutz (Lz)", "value": "Lz"},
+    {"label": "Combination (Co)", "value": "Co"}
 ]
 
 PHASE_STAGES = [
@@ -59,9 +60,7 @@ ACTION_UNITS = [
     {"label": "H2: 头部右旋转", "value": "H2"},
     {"label": "H3: 头上仰", "value": "H3"},
     {"label": "H4: 头下低", "value": "H4"},
-    {"label": "H5: 头左侧倾斜", "value": "H5"},
-    {"label": "H6: 头右侧倾斜", "value": "H6"},
-    {"label": "H7: 头部直视前方", "value": "H7"},
+    {"label": "H5: 头部直视前方", "value": "H5"},
     
     {"label": "T1: 躯干左旋转", "value": "T1"},
     {"label": "T2: 躯干右旋转", "value": "T2"},
@@ -74,16 +73,18 @@ ACTION_UNITS = [
     {"label": "L1: 左上臂前屈", "value": "L1"},
     {"label": "L2: 左上臂外展", "value": "L2"},
     {"label": "L3: 左上臂后伸", "value": "L3"},
-    {"label": "L4: 肘部弯曲", "value": "L4"},
+    {"label": "L4: 左上臂内收", "value": "L4"},
     {"label": "L5: 手掌打开", "value": "L5"},
     {"label": "L6: 手掌握拳", "value": "L6"},
+    {"label": "L7: 左臂下垂", "value": "L7"},
     
     {"label": "R1: 右上臂前屈", "value": "R1"},
     {"label": "R2: 右上臂外展", "value": "R2"},
     {"label": "R3: 右上臂后伸", "value": "R3"},
-    {"label": "R4: 肘部弯曲", "value": "R4"},
+    {"label": "R4: 右上臂内收", "value": "R4"},
     {"label": "R5: 手掌打开", "value": "R5"},
     {"label": "R6: 手掌握拳", "value": "R6"},
+    {"label": "R7: 右臂下垂", "value": "R7"},
     
     {"label": "l1: 左髋前屈", "value": "l1"},
     {"label": "l2: 左髋外展", "value": "l2"},
@@ -92,6 +93,7 @@ ACTION_UNITS = [
     {"label": "l5: 左膝弯曲", "value": "l5"},
     {"label": "l6: 点冰（脚尖下压）", "value": "l6"},
     {"label": "l7: 勾脚尖", "value": "l7"},
+    {"label": "l8: 左腿直立", "value": "l8"},
     
     {"label": "r1: 右髋前屈", "value": "r1"},
     {"label": "r2: 右髋外展", "value": "r2"},
@@ -99,7 +101,8 @@ ACTION_UNITS = [
     {"label": "r4: 右髋内收", "value": "r4"},
     {"label": "r5: 右膝弯曲", "value": "r5"},
     {"label": "r6: 点冰（脚尖下压）", "value": "r6"},
-    {"label": "r7: 勾脚尖", "value": "r7"}
+    {"label": "r7: 勾脚尖", "value": "r7"},
+    {"label": "r8: 右腿直立", "value": "r8"}
 ]
 # ===========================
 
@@ -565,7 +568,7 @@ app.layout = html.Div([
                     dcc.RadioItems(id='radio-temporal-flag', options=TEMPORAL_FLAGS, value="S", inline=True, style={'marginBottom': '10px'}),
                     
                     html.Label("动作单元 (多选)", style={'fontWeight': 'bold', 'marginTop': '10px', 'display': 'block'}),
-                    dcc.Dropdown(id='dropdown-action-units', options=ACTION_UNITS, multi=True, placeholder="可选择多项组合...", close_on_select=False),
+                    dcc.Dropdown(id='dropdown-action-units', options=ACTION_UNITS, multi=True, placeholder="可选择多项组合...", closeOnSelect=False),
                     
                     html.Div(id='label-preview', style={'marginTop': '15px', 'padding': '10px', 'fontFamily': 'monospace', 'backgroundColor': '#e9ecef', 'borderRadius': '5px', 'fontSize': '16px', 'fontWeight': 'bold'}),
                     
@@ -739,6 +742,7 @@ def render_template(cluster_id):
         elif 'salchow' in path_str: j_val = "S"
         elif 'flip' in path_str: j_val = "F"
         elif 'lutz' in path_str: j_val = "Lz"
+        elif 'comb' in path_str: j_val = "Co"
     # ------------------------------------
 
     s_val = metadata.get('stage', None)
