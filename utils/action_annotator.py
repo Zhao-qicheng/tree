@@ -565,7 +565,7 @@ app.layout = html.Div([
                     dcc.RadioItems(id='radio-temporal-flag', options=TEMPORAL_FLAGS, value="S", inline=True, style={'marginBottom': '10px'}),
                     
                     html.Label("动作单元 (多选)", style={'fontWeight': 'bold', 'marginTop': '10px', 'display': 'block'}),
-                    dcc.Dropdown(id='dropdown-action-units', options=ACTION_UNITS, multi=True, placeholder="可选择多项组合..."),
+                    dcc.Dropdown(id='dropdown-action-units', options=ACTION_UNITS, multi=True, placeholder="可选择多项组合...", close_on_select=False),
                     
                     html.Div(id='label-preview', style={'marginTop': '15px', 'padding': '10px', 'fontFamily': 'monospace', 'backgroundColor': '#e9ecef', 'borderRadius': '5px', 'fontSize': '16px', 'fontWeight': 'bold'}),
                     
