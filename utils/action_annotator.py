@@ -61,6 +61,7 @@ ACTION_UNITS = [
     {"label": "H4: 头下低", "value": "H4"},
     {"label": "H5: 头左侧倾斜", "value": "H5"},
     {"label": "H6: 头右侧倾斜", "value": "H6"},
+    {"label": "H7: 头部直视前方", "value": "H7"},
     
     {"label": "T1: 躯干左旋转", "value": "T1"},
     {"label": "T2: 躯干右旋转", "value": "T2"},
@@ -68,6 +69,7 @@ ACTION_UNITS = [
     {"label": "T4: 躯干后仰", "value": "T4"},
     {"label": "T5: 躯干左倾斜", "value": "T5"},
     {"label": "T6: 躯干右倾斜", "value": "T6"},
+    {"label": "T7: 躯干直立", "value": "T7"},
     
     {"label": "L1: 左上臂前屈", "value": "L1"},
     {"label": "L2: 左上臂外展", "value": "L2"},
@@ -743,7 +745,7 @@ def render_template(cluster_id):
     t_val = metadata.get('temporal_flag', "S")
     u_val = metadata.get('action_units', [])
     camera_options = discover_camera_options(source_path, source_file)
-    camera_value = "cam_1"
+    camera_value = metadata.get('camera', 'cam_1') # 💡 改进：优先从已保存的元数据中读取视角
 
     video_path = resolve_video_path(source_path, source_file, camera_value)
     video_metadata, video_error = get_video_metadata(video_path)
@@ -894,10 +896,11 @@ def update_video_frame(frame_idx, video_metadata):
      State('dropdown-jump-type', 'value'),
      State('dropdown-stage', 'value'),
      State('radio-temporal-flag', 'value'),
-     State('dropdown-action-units', 'value')],
+     State('dropdown-action-units', 'value'),
+     State('template-video-camera-dropdown', 'value')], # 💡 增加状态读取：当前视角
     prevent_initial_call=True
 )
-def save_custom_label(n_clicks, cid, jump, stage, temporal, units):
+def save_custom_label(n_clicks, cid, jump, stage, temporal, units, camera):
     if not cid:
         # 如果是首次加载且没有选中值，默认选第一个
         db_init = load_db()
@@ -920,7 +923,8 @@ def save_custom_label(n_clicks, cid, jump, stage, temporal, units):
             'jump_type': jump,
             'stage': stage,
             'temporal_flag': temporal,
-            'action_units': units if units else []
+            'action_units': units if units else [],
+            'camera': camera # 💡 记录视角，但这不会被合成到上面的 new_label 中
         }
         save_db(db)
         
