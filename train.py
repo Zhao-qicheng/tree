@@ -140,6 +140,54 @@ def _load_frame_worker_npy(payload: tuple[int, str]) -> dict:
         }
 
 
+def _load_frame_worker_skeleton_npz(payload: tuple[int, str]) -> dict:
+    """Skeleton NPZ 格式帧加载工作函数"""
+    from skeleton_npz_loader import (
+        load_keypoints_from_skeleton_npz,
+        generate_frame_id_from_skeleton_npz,
+    )
+    from npy_loader import normalize_skeleton
+
+    frame_index, npz_file = payload
+    try:
+        keypoints_raw = load_keypoints_from_skeleton_npz(frame_index, npz_file)
+
+        if getattr(config, "ENABLE_ALIGN", True):
+            aligned_keypoints = align_skeleton(keypoints_raw)
+        else:
+            aligned_keypoints = keypoints_raw
+
+        names = config.KEYPOINT_NAMES
+        frame_array = np.array([aligned_keypoints[name] for name in names])
+
+        if getattr(config, "ENABLE_NORMALIZE", True):
+            normalized_array = normalize_skeleton(frame_array)
+        else:
+            normalized_array = frame_array
+
+        final_keypoints = {name: normalized_array[i] for i, name in enumerate(names)}
+        frame_id = generate_frame_id_from_skeleton_npz(npz_file, frame_index)
+        rounded_keypoints = {
+            name: np.round(pos, config.JSON_FLOAT_PRECISION)
+            for name, pos in final_keypoints.items()
+        }
+        return {
+            "success": True,
+            "frame_index": frame_index,
+            "source_file": npz_file,
+            "frame_id": frame_id,
+            "keypoints": final_keypoints,
+            "rounded_keypoints": rounded_keypoints,
+        }
+    except Exception as exc:
+        return {
+            "success": False,
+            "frame_index": frame_index,
+            "source_file": npz_file,
+            "error": str(exc),
+        }
+
+
 def _load_frame_worker_bvh(payload: tuple[int, str]) -> dict:
     """BVH 格式帧加载工作函数"""
     from data_loader import load_keypoints_from_bvh
@@ -206,7 +254,7 @@ def train_single_tree(data_dir: str,
         rotation_config: 旋转配置（可选）
         verbose: 是否打印详细信息
         num_workers: 并行进程数
-        data_source_type: 数据源类型 ("bvh" 或 "npy")
+        data_source_type: 数据源类型 ("bvh"、"npy" 或 "skeleton_npz")
     """
     if data_source_type is None:
         data_source_type = config.DATA_SOURCE_TYPE
@@ -233,6 +281,16 @@ def train_single_tree(data_dir: str,
         get_frame_count = get_npy_frame_count
         clear_file_cache = clear_specific_npy_file
         load_frame_worker = _load_frame_worker_npy
+    elif data_source_type == "skeleton_npz":
+        from skeleton_npz_loader import (
+            load_all_skeleton_npz_files,
+            get_skeleton_npz_frame_count,
+            clear_specific_skeleton_npz_file,
+        )
+        load_all_files = load_all_skeleton_npz_files
+        get_frame_count = get_skeleton_npz_frame_count
+        clear_file_cache = clear_specific_skeleton_npz_file
+        load_frame_worker = _load_frame_worker_skeleton_npz
     else:
         from data_loader import load_all_bvh_files, get_bvh_frame_count
         from data_frame import clear_specific_file
@@ -418,7 +476,10 @@ def train_model(data_dir: str = None,
     Path(model_tree_path).parent.mkdir(parents=True, exist_ok=True)
     Path(model_metadata_path).parent.mkdir(parents=True, exist_ok=True)
     if data_dir is None:
-        if config.DATA_SOURCE_TYPE == "npy":
+        effective_source = data_source_type or config.DATA_SOURCE_TYPE
+        if effective_source == "skeleton_npz":
+            data_dir = getattr(config, "SKELETON_DATA_DIR", "data/skeleton")
+        elif effective_source == "npy":
             # 使用训练集目录作为默认值
             data_dir = getattr(config, "TRAIN_DATA_DIR", config.FS_JUMP3D_DATA_DIR)
         else:
@@ -518,7 +579,7 @@ def main():
     parser.add_argument("--output-metadata", default="models/model.pkl", help="输出元数据文件路径")
     parser.add_argument("--quiet", action="store_true", help="静默模式")
     parser.add_argument("--workers", type=int, default=None, help="并行加载进程数")
-    parser.add_argument("--source-type", choices=["bvh", "npy"], default=None, 
+    parser.add_argument("--source-type", choices=["bvh", "npy", "skeleton_npz"], default=None,
                         help="数据源类型 (默认使用 config 配置)")
     
     args = parser.parse_args()

@@ -48,12 +48,15 @@ def _path(env_key: str, default_relative: str) -> str:
 # 数据源配置
 # ============================================================================
 
-# 数据源类型："bvh" 或 "npy"
+# 数据源类型："bvh"、"npy" 或 "skeleton_npz"
 DATA_SOURCE_TYPE: str = "npy"
 
 # FS-Jump3D 数据目录（NPY 格式，原始完整数据）
 # 优先读取环境变量 FS_JUMP3D_DATA_DIR，默认为项目内 data/npy
 FS_JUMP3D_DATA_DIR: str = _path('FS_JUMP3D_DATA_DIR', 'data/npy')
+
+# Skeleton NPZ 数据目录（reconstruction 数组，shape=(N,17,3)）
+SKELETON_DATA_DIR: str = _path('SKELETON_DATA_DIR', 'data/skeleton')
 
 # 划分后的训练集与测试集目录（由 split_dataset.py 生成）
 TRAIN_DATA_DIR: str = _path('TRAIN_DATA_DIR', 'data/npy_train')

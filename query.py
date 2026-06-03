@@ -505,6 +505,27 @@ def query_same_node_frames_from_npy(npy_file: str,
     )
 
 
+def query_same_node_frames_from_skeleton_npz(npz_file: str,
+                                             frame_index: int,
+                                             model_tree_path: str = "models/model.npz",
+                                             model_metadata_path: str = "models/model.pkl",
+                                             verbose: bool = True,
+                                             *,
+                                             tree_instance: Optional[FlatOctree] = None,
+                                             use_cache: bool = True) -> List[str]:
+    """从 skeleton NPZ 文件加载查询帧并查找同节点帧"""
+    from skeleton_npz_loader import load_keypoints_from_skeleton_npz
+    keypoints = load_keypoints_from_skeleton_npz(frame_index, npz_file)
+    return find_frames_in_same_node(
+        keypoints,
+        model_tree_path,
+        model_metadata_path,
+        verbose,
+        tree_instance=tree_instance,
+        use_cache=use_cache
+    )
+
+
 def query_same_node_frames_from_bvh(bvh_file: str,
                                    frame_index: int,
                                    model_tree_path: str = "models/model.npz",
@@ -620,6 +641,41 @@ def query_from_npy(npy_file: str,
     )
 
 
+def query_from_skeleton_npz(npz_file: str,
+                            frame_index: int,
+                            model_tree_path: str = "models/model.npz",
+                            model_metadata_path: str = "models/model.pkl",
+                            top_k: int = None,
+                            verbose: bool = True,
+                            *,
+                            tree_instance: Optional[FlatOctree] = None,
+                            metadata_instance: Optional[List[FrameMetadata]] = None,
+                            use_cache: bool = True,
+                            enable_parallel: bool = True,
+                            parallel_workers: Optional[int] = None) -> List[SimilarityResult]:
+    """从 skeleton NPZ 文件加载查询帧并执行检索。"""
+    from skeleton_npz_loader import load_keypoints_from_skeleton_npz
+
+    if verbose:
+        print(f"\n从 skeleton NPZ 文件加载查询帧...")
+        print(f"  文件: {npz_file}")
+        print(f"  帧索引: {frame_index}")
+
+    keypoints = load_keypoints_from_skeleton_npz(frame_index, npz_file)
+    return query_frame(
+        keypoints,
+        model_tree_path,
+        model_metadata_path,
+        top_k,
+        verbose,
+        tree_instance=tree_instance,
+        metadata_instance=metadata_instance,
+        use_cache=use_cache,
+        enable_parallel=enable_parallel,
+        parallel_workers=parallel_workers,
+    )
+
+
 def interactive_mode(model_tree_path: str,
                      model_metadata_path: str,
                      top_k: Optional[int] = None,
@@ -692,6 +748,7 @@ def main():
     parser = argparse.ArgumentParser(description="帧检索查询")
     parser.add_argument("--bvh-file", help="BVH文件路径")
     parser.add_argument("--npy-file", help="NPY文件路径（Human3.6M格式）")
+    parser.add_argument("--skeleton-npz-file", help="Skeleton NPZ 文件路径（reconstruction 数组）")
     parser.add_argument("--frame-index", type=int, help="帧索引")
     parser.add_argument("--model-tree", default="models/model.npz", help="树模型文件路径")
     parser.add_argument("--model-metadata", default="models/model.pkl", help="元数据文件路径")
@@ -713,7 +770,29 @@ def main():
             sys.exit(0)
 
         # 检查输入文件
-        if args.npy_file:
+        if args.skeleton_npz_file:
+            if args.frame_index is None:
+                print("错误: 必须提供 --frame-index。")
+                sys.exit(1)
+
+            if args.same_node:
+                results = query_same_node_frames_from_skeleton_npz(
+                    npz_file=args.skeleton_npz_file,
+                    frame_index=args.frame_index,
+                    model_tree_path=args.model_tree,
+                    model_metadata_path=args.model_metadata,
+                    verbose=not args.quiet
+                )
+            else:
+                results = query_from_skeleton_npz(
+                    npz_file=args.skeleton_npz_file,
+                    frame_index=args.frame_index,
+                    model_tree_path=args.model_tree,
+                    model_metadata_path=args.model_metadata,
+                    top_k=args.top_k,
+                    verbose=not args.quiet
+                )
+        elif args.npy_file:
             # NPY 模式
             if args.frame_index is None:
                 print("错误: 必须提供 --frame-index。")
@@ -760,7 +839,7 @@ def main():
                     verbose=not args.quiet
                 )
         else:
-            print("错误: 必须提供 --bvh-file 或 --npy-file。")
+            print("错误: 必须提供 --bvh-file、--npy-file 或 --skeleton-npz-file。")
             sys.exit(1)
             
         sys.exit(0)

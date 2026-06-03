@@ -16,6 +16,7 @@ except ImportError:
 # 导入项目中通用的基础算法，用以进行测试帧与历史帧一样的环境
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from npy_loader import normalize_skeleton
+from skeleton_npz_loader import load_pose_sequence
 
 # 定义画图连线规范
 H36M_CONNECTIONS = [
@@ -106,7 +107,7 @@ ACTION_UNITS = [
 ]
 # ===========================
 
-DB_PATH = 'output/action_templates.json'
+DB_PATH = os.environ.get("ACTION_TEMPLATE_FILE", "output/action_templates.json")
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 VIDEO_ROOT = PROJECT_ROOT / "data" / "video"
 JSON_ROOT = PROJECT_ROOT / "data" / "json"
@@ -614,9 +615,9 @@ app.layout = html.Div([
         # ====================== [板块 2] : 新品动作比令人判决 ======================
         dcc.Tab(label='🔬 单帧实时诊断与配型', children=[
             html.Div([
-                html.H3("指派本地 .npy 数据源路径进行定级", style={'textAlign': 'center'}),
+                html.H3("指派本地姿态数据源路径进行定级", style={'textAlign': 'center'}),
                 html.Div([
-                    dcc.Input(id='test-file-path', type='text', placeholder="请输入绝对或相对路径（例：./data/npy/Skater/Axel/1.npy）", style={'width': '50%', 'padding': '10px'}),
+                    dcc.Input(id='test-file-path', type='text', placeholder="请输入 .npy 或 skeleton .npz 路径（例：./data/skeleton/0.npz）", style={'width': '50%', 'padding': '10px'}),
                     html.Button("📥 载入并检索帧数", id='load-test-btn', n_clicks=0, style={'marginLeft': '10px', 'padding': '10px'})
                 ], style={'textAlign': 'center', 'marginBottom': '20px'}),
                 
@@ -972,7 +973,7 @@ def load_test_file(n_clicks, file_path):
         return [html.Div("无效的数据路径！请检查", style={'color': 'red'})]
     
     try:
-        data = np.load(file_path)
+        data = load_pose_sequence(file_path)
         frame_cnt = data.shape[0]
         new_slider = dcc.Slider(
             id='frame-slider', min=0, max=frame_cnt-1, step=1, value=0, 
@@ -981,7 +982,7 @@ def load_test_file(n_clicks, file_path):
         )
         return [new_slider]
     except Exception as e:
-        return [html.Div(f"解析 .npy 遇到错误：{e}", style={'color': 'red'})]
+        return [html.Div(f"解析姿态文件遇到错误：{e}", style={'color': 'red'})]
 
 
 # 2. 划动拉条或首次加载，直接执行超猛的“距离排查算法”以确认同伴
@@ -999,10 +1000,10 @@ def run_model_inference(frame_idx, file_path):
         
     # a. 读取那悲惨并尚未鉴定身份的新帧
     try:
-        data = np.load(file_path)
+        data = load_pose_sequence(file_path)
         raw_pose = data[frame_idx]
     except Exception as e:
-         return dash.no_update, dash.no_update, f"抽取该阵列错误: {e}"
+         return dash.no_update, dash.no_update, f"抽取该帧错误: {e}"
 
     # 它也必须经过社会大熔炉统一被我们洗干净
     test_aligned_pose = align_skeleton(raw_pose)

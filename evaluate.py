@@ -107,10 +107,17 @@ def check_frame_match(tree, query_keypoints_norm: dict[str, np.ndarray]) -> Tupl
 
 def evaluate_model(model_tree_path: str = "models/model.npz",
                    model_metadata_path: str = "models/model.pkl",
-                   test_data_dir: str = None):
+                   test_data_dir: str = None,
+                   data_source_type: str = None):
     
+    if data_source_type is None:
+        data_source_type = config.DATA_SOURCE_TYPE
+
     if test_data_dir is None:
-        test_data_dir = getattr(config, "TEST_DATA_DIR", "data/npy_test")
+        if data_source_type == "skeleton_npz":
+            test_data_dir = getattr(config, "SKELETON_DATA_DIR", "data/skeleton")
+        else:
+            test_data_dir = getattr(config, "TEST_DATA_DIR", "data/npy_test")
         
     print("=" * 70)
     print("八叉树模型评估 (泛化能力验证)")
@@ -136,15 +143,38 @@ def evaluate_model(model_tree_path: str = "models/model.npz",
     print(f"模型加载完毕！包含 {len(tree.node_parent_idx)} 个扁平树节点。耗时 {time.time()-start_time:.2f} 秒\n")
 
     # 2. 扫描测试集数据
-    from npy_loader import load_all_npy_files, get_npy_frame_count, load_keypoints_from_npy, clear_specific_npy_file
+    if data_source_type == "skeleton_npz":
+        from skeleton_npz_loader import (
+            load_all_skeleton_npz_files,
+            get_skeleton_npz_frame_count,
+            load_keypoints_from_skeleton_npz,
+            clear_specific_skeleton_npz_file,
+        )
+        load_all_files = load_all_skeleton_npz_files
+        get_frame_count = get_skeleton_npz_frame_count
+        load_keypoints = load_keypoints_from_skeleton_npz
+        clear_file_cache = clear_specific_skeleton_npz_file
+        file_ext_label = ".npz"
+    else:
+        from npy_loader import (
+            load_all_npy_files,
+            get_npy_frame_count,
+            load_keypoints_from_npy,
+            clear_specific_npy_file,
+        )
+        load_all_files = load_all_npy_files
+        get_frame_count = get_npy_frame_count
+        load_keypoints = load_keypoints_from_npy
+        clear_file_cache = clear_specific_npy_file
+        file_ext_label = ".npy"
     
     try:
-        test_files = load_all_npy_files(test_data_dir)
+        test_files = load_all_files(test_data_dir)
     except FileNotFoundError:
         print(f"测试集目录 {test_data_dir} 为空，中止评估。")
         return
         
-    print(f"扫描到 {len(test_files)} 个测试用的 .npy 文件。")
+    print(f"扫描到 {len(test_files)} 个测试用的 {file_ext_label} 文件。")
     if not test_files:
         print("测试集为空，中止评估。")
         return
@@ -164,12 +194,16 @@ def evaluate_model(model_tree_path: str = "models/model.npz",
     
     # 我们避免引入复杂的并行以防止树查找时的潜在竞争，且单帧计算也极快
     for i, file_path in enumerate(test_files, 1):
-        num_frames = get_npy_frame_count(file_path)
+        num_frames = get_frame_count(file_path)
         
         # 提取类别 / 跳跃名称作为显示
-        from npy_loader import get_npy_metadata
-        meta = get_npy_metadata(file_path)
-        j_type = meta.get('jump_type', 'Unknown')
+        if data_source_type == "skeleton_npz":
+            j_type = Path(file_path).stem
+            meta = {"skater": "Unknown", "jump_type": j_type, "filename": j_type}
+        else:
+            from npy_loader import get_npy_metadata
+            meta = get_npy_metadata(file_path)
+            j_type = meta.get('jump_type', 'Unknown')
         if j_type not in stats_by_jump:
             stats_by_jump[j_type] = {'total': 0, 'hit': 0}
             
@@ -177,7 +211,7 @@ def evaluate_model(model_tree_path: str = "models/model.npz",
         for frame_idx in range(num_frames):
             try:
                 # 加载并提取数据
-                raw_kps = load_keypoints_from_npy(frame_idx, file_path, align=False, normalize=False)
+                raw_kps = load_keypoints(frame_idx, file_path, align=False, normalize=False)
                 # 执行与查询同等级别的归一化
                 norm_kps = _normalize_query_input(raw_kps)
                 
@@ -215,7 +249,7 @@ def evaluate_model(model_tree_path: str = "models/model.npz",
                 pass
                 
         # 内存释放
-        clear_specific_npy_file(file_path)
+        clear_file_cache(file_path)
         gc.collect()
 
         print(f"  [{i}/{len(test_files)}] 文件 {Path(file_path).name} : {num_frames}帧, 初始自然命中 {file_hits} 帧.", end='\r')
@@ -274,6 +308,8 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="评估八叉树模型的泛化与覆盖性能")
     parser.add_argument("--test-dir", type=str, default=None, help="测试数据集路径 (默认读取 config.TEST_DATA_DIR)")
+    parser.add_argument("--source-type", choices=["npy", "skeleton_npz"], default=None,
+                        help="数据源类型 (默认使用 config 配置)")
     parser.add_argument("--model-tree", default="models/model.npz", help="树模型文件路径")
     parser.add_argument("--model-metadata", default="models/model.pkl", help="元数据文件路径")
     
@@ -283,7 +319,8 @@ def main():
         evaluate_model(
             model_tree_path=args.model_tree,
             model_metadata_path=args.model_metadata,
-            test_data_dir=args.test_dir
+            test_data_dir=args.test_dir,
+            data_source_type=args.source_type,
         )
     except KeyboardInterrupt:
         print("\n评估被用户中断。")

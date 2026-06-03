@@ -7,6 +7,7 @@ import numpy as np
 # 将项目根目录加入到sys.path，以便引入 npy_loader
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from npy_loader import normalize_skeleton
+from skeleton_npz_loader import load_pose_sequence, load_all_skeleton_npz_files
 from sklearn.metrics import pairwise_distances_argmin_min
 
 
@@ -78,8 +79,17 @@ ORIGINAL84_CONNECTIONS = [
     (45, 68), (68, 73), (73, 77), (77, 80), (80, 81), (80, 82),
 ]
 RIG_MODE = os.environ.get("ACTION_EXPLORER_RIG_MODE", "h36m17")
-DATA_ROOT = os.environ.get("ACTION_EXPLORER_DATA_ROOT", "./data/npy_original84" if RIG_MODE == "original84" else "./data/npy")
+DATA_FORMAT = os.environ.get("ACTION_EXPLORER_DATA_FORMAT", "npy")
+if DATA_FORMAT not in ("npy", "skeleton_npz"):
+    DATA_FORMAT = "npy"
+_default_data_root = (
+    "./data/skeleton" if DATA_FORMAT == "skeleton_npz"
+    else ("./data/npy_original84" if RIG_MODE == "original84" else "./data/npy")
+)
+DATA_ROOT = os.environ.get("ACTION_EXPLORER_DATA_ROOT", _default_data_root)
 RUN_TSNE = os.environ.get("ACTION_EXPLORER_RUN_TSNE", "1") != "0"
+_max_frames_env = os.environ.get("ACTION_EXPLORER_MAX_FRAMES", "").strip()
+MAX_FRAMES = int(_max_frames_env) if _max_frames_env.isdigit() and int(_max_frames_env) > 0 else None
 
 # --- 1. 数据处理与特性工程 ---
 
@@ -173,39 +183,51 @@ def pose_labels_by_mode(joint_count, rig_mode):
         return [str(i) for i in range(joint_count)]
     return [str(i) for i in range(min(17, joint_count))]
 
-def load_and_process_data(root_dir=DATA_ROOT, rig_mode=RIG_MODE):
+def load_and_process_data(root_dir=DATA_ROOT, rig_mode=RIG_MODE, data_format=DATA_FORMAT):
     """
-    加载 .npy 数据，执行对齐，并使用 t-SNE 进行降维映射。
-    支持两种输入：
-    - 单个 .npy 文件路径
-    - 包含多个 .npy 文件的目录路径
+    加载姿态数据，执行对齐，并使用 t-SNE 进行降维映射。
+    支持：
+    - 单个 .npy / skeleton .npz 文件
+    - 包含多个数据文件的目录
     """
     all_frames = []
     metadata = []  # 存储每帧的元数据：文件名、帧号、完整路径、运动员ID
     
-    safe_print(f"正在加载并对齐数据... rig_mode={rig_mode}, root_dir={root_dir}")
+    safe_print(
+        f"正在加载并对齐数据... data_format={data_format}, rig_mode={rig_mode}, root_dir={root_dir}"
+    )
+    if data_format == "skeleton_npz":
+        safe_print("警告: skeleton_npz 全量加载可能占用大量内存与耗时。")
+    if MAX_FRAMES is not None:
+        safe_print(f"已启用帧数上限 ACTION_EXPLORER_MAX_FRAMES={MAX_FRAMES}")
     files_processed = 0
     start_time = time.time()
+    frames_loaded = 0
     
     def process_single_file(path):
-        """处理单个 .npy 文件"""
-        nonlocal files_processed
-        data = np.load(path)  # shape: (总帧数, 关节数, 3个坐标)
+        """处理单个姿态文件"""
+        nonlocal files_processed, frames_loaded
+        if MAX_FRAMES is not None and frames_loaded >= MAX_FRAMES:
+            return
+        data = load_pose_sequence(path)
         filename = os.path.basename(path)
         
-        # 遍历文件中的每一帧进行预处理
         for i in range(data.shape[0]):
+            if MAX_FRAMES is not None and frames_loaded >= MAX_FRAMES:
+                break
             frame = data[i]
             aligned = align_frame_by_mode(frame, rig_mode)
             
-            # 路径解析逻辑：根据文件夹结构提取运动员名称
-            path_parts = os.path.normpath(path).split(os.sep)
-            try:
-                root_name = 'npy_original84' if rig_mode == "original84" else 'npy'
-                npy_index = path_parts.index(root_name)
-                skater_name = path_parts[npy_index + 1]
-            except ValueError:
-                skater_name = 'Unknown'
+            if data_format == "skeleton_npz":
+                skater_name = "skeleton"
+            else:
+                path_parts = os.path.normpath(path).split(os.sep)
+                try:
+                    root_name = 'npy_original84' if rig_mode == "original84" else 'npy'
+                    npy_index = path_parts.index(root_name)
+                    skater_name = path_parts[npy_index + 1]
+                except ValueError:
+                    skater_name = 'Unknown'
             
             all_frames.append(aligned.flatten())
             metadata.append({
@@ -214,22 +236,36 @@ def load_and_process_data(root_dir=DATA_ROOT, rig_mode=RIG_MODE):
                 'path': path,
                 'skater': skater_name
             })
+            frames_loaded += 1
         files_processed += 1
     
-    # 判断输入是文件还是目录
-    if os.path.isfile(root_dir) and root_dir.endswith('.npy'):
-        # 单文件模式
-        process_single_file(root_dir)
+    file_paths = []
+    if data_format == "skeleton_npz":
+        try:
+            file_paths = load_all_skeleton_npz_files(root_dir)
+        except FileNotFoundError:
+            safe_print(f"错误：路径不存在或不是有效的 skeleton .npz 文件/目录: {root_dir}")
+            return pd.DataFrame(), np.array([])
+    elif os.path.isfile(root_dir) and root_dir.endswith('.npy'):
+        file_paths = [root_dir]
     elif os.path.isdir(root_dir):
-        # 目录模式：递归遍历
         for root, dirs, files in os.walk(root_dir):
             for f in files:
                 if f.endswith('.npy'):
-                    path = os.path.join(root, f)
-                    process_single_file(path)
+                    file_paths.append(os.path.join(root, f))
     else:
         safe_print(f"错误：路径不存在或不是有效的 .npy 文件/目录: {root_dir}")
-        return pd.DataFrame()
+        return pd.DataFrame(), np.array([])
+
+    if not file_paths:
+        safe_print(f"错误：在 {root_dir} 下未找到数据文件。")
+        return pd.DataFrame(), np.array([])
+
+    safe_print(f"扫描到 {len(file_paths)} 个数据文件，开始逐文件加载...")
+    for path in file_paths:
+        if MAX_FRAMES is not None and frames_loaded >= MAX_FRAMES:
+            break
+        process_single_file(path)
 
     safe_print(f"数据加载完成。处理了 {files_processed} 个文件，共 {len(all_frames)} 帧。耗时: {time.time()-start_time:.2f}s")
     
@@ -275,7 +311,12 @@ def load_and_process_data(root_dir=DATA_ROOT, rig_mode=RIG_MODE):
 
 # --- 2. 缓存管理 ---
 # 为了避免每次启动都耗费几分钟计算特征转换，我们将结果全量缓存
-CACHE_SUFFIX = "_original84" if RIG_MODE == "original84" else ""
+if DATA_FORMAT == "skeleton_npz":
+    CACHE_SUFFIX = "_skeleton_npz"
+elif RIG_MODE == "original84":
+    CACHE_SUFFIX = "_original84"
+else:
+    CACHE_SUFFIX = ""
 CACHE_FILE = f'output/action_space_cache{CACHE_SUFFIX}.csv'
 PCA_CACHE_FILE = f'output/action_space_cache_pca{CACHE_SUFFIX}.npy'
 TEMPLATE_FILE = f'output/action_templates{CACHE_SUFFIX}.json'
@@ -290,13 +331,47 @@ if os.path.exists(CACHE_FILE) and os.path.exists(PCA_CACHE_FILE):
     df = pd.read_csv(CACHE_FILE)
     PCA_FEATURES = np.load(PCA_CACHE_FILE)
 else:
-    df, PCA_FEATURES = load_and_process_data(DATA_ROOT, RIG_MODE)
+    df, PCA_FEATURES = load_and_process_data(DATA_ROOT, RIG_MODE, DATA_FORMAT)
     # 首次计算后自动导出缓存
     df.to_csv(CACHE_FILE, index=False)
     np.save(PCA_CACHE_FILE, PCA_FEATURES)
     safe_print(f"分析结果及其高维抽象已保存至 output/ 目录下。")
 
+N_SAMPLES = len(df)
+DEFAULT_K = min(500, max(2, N_SAMPLES))
+if N_SAMPLES < 500:
+    safe_print(
+        f"提示: 当前加载 {N_SAMPLES} 帧。聚类数 K 不可超过样本数；"
+        f"默认 K={DEFAULT_K}。若样本过少，请删除 {CACHE_FILE} 与 {PCA_CACHE_FILE} 后重新加载数据。"
+    )
+
 # --- 3. Dash 应用布局与交互 ---
+
+
+def _resolve_k_clusters(k, n_samples: int) -> tuple[int | None, str | None]:
+    """
+    将用户输入的 K 约束到 [2, n_samples]，返回 (有效K, 提示信息)。
+    无法聚类时返回 (None, 错误信息)。
+    """
+    if n_samples < 2:
+        return None, f"当前仅有 {n_samples} 帧，至少需要 2 帧才能执行 K-Means。"
+
+    try:
+        k_int = int(k)
+    except (TypeError, ValueError):
+        k_int = min(500, n_samples)
+
+    if k_int < 2:
+        k_int = 2
+
+    if k_int > n_samples:
+        effective = n_samples
+        return effective, (
+            f"K 已从 {k_int} 自动调整为 {effective}（样本数 {n_samples}，K 不能大于样本数）。"
+        )
+
+    return k_int, None
+
 
 app = dash.Dash(__name__)
 
@@ -352,7 +427,8 @@ app.layout = html.Div([
     # 交互控制区：设置聚类数量
     html.Div([
         html.Label("聚类数量 (K): ", style={'fontWeight': 'bold', 'marginRight': '10px'}),
-        dcc.Input(id='k-input', type='number', value=500, min=2, max=1000, step=1, style={'width': '60px', 'marginRight': '10px'}),
+        dcc.Input(id='k-input', type='number', value=DEFAULT_K, min=2, max=max(2, N_SAMPLES), step=1, style={'width': '60px', 'marginRight': '10px'}),
+        html.Span(f"（已加载 {N_SAMPLES} 帧，K ≤ {N_SAMPLES}）", style={'marginRight': '10px', 'color': '#666', 'fontSize': '13px'}),
         html.Button('执行 K-Means 聚类分析', id='cluster-btn', n_clicks=0, style={'cursor': 'pointer', 'backgroundColor': '#007BFF', 'color': 'white', 'border': 'none', 'padding': '8px 20px', 'borderRadius': '5px', 'marginRight': '10px'}),
         html.Button('保存当前结果', id='save-btn', n_clicks=0, style={'cursor': 'pointer', 'backgroundColor': '#28A745', 'color': 'white', 'border': 'none', 'padding': '8px 20px', 'borderRadius': '5px', 'marginRight': '10px'}),
         html.Button('分析 K 值趋势 (8-50)', id='analyze-btn', n_clicks=0, style={'cursor': 'pointer', 'backgroundColor': '#17A2B8', 'color': 'white', 'border': 'none', 'padding': '8px 20px', 'borderRadius': '5px'}),
@@ -402,18 +478,22 @@ def update_clustering(n_clicks, k):
     """
     if n_clicks == 0:
         return dash.no_update, ""
-    
-    safe_print(f"正在对 3D 映射空间执行 K-Means (K={k})...")
+
+    effective_k, adjust_msg = _resolve_k_clusters(k, N_SAMPLES)
+    if effective_k is None:
+        return dash.no_update, adjust_msg
+
+    safe_print(f"正在对 3D 映射空间执行 K-Means (K={effective_k})...")
     start_t = time.time()
-    
-    # 使用更高维度的抽象特征来取代 3D 挤压坐标，大幅度增强细微切割精度
+
     features_for_clustering = PCA_FEATURES
-    # n_init='auto' 是 sklearn 新版本推荐的设置
-    kmeans = KMeans(n_clusters=k, random_state=42, n_init='auto')
+    kmeans = KMeans(n_clusters=effective_k, random_state=42, n_init='auto')
     labels = kmeans.fit_predict(features_for_clustering)
-    
+
     new_fig = generate_scatter_figure(df, labels)
-    msg = f"聚类成功 (K={k})！由于数据已降维，计算耗时仅为 {time.time()-start_t:.2f}s"
+    msg = f"聚类成功 (K={effective_k})！计算耗时 {time.time()-start_t:.2f}s"
+    if adjust_msg:
+        msg = adjust_msg + " " + msg
     safe_print(msg)
 
     return new_fig, msg
@@ -436,20 +516,21 @@ def save_clustering_result(n_clicks, k):
         return dash.no_update
 
     try:
-        safe_print(f"正在导出结果至文件夹 (K={k})...")
+        effective_k, adjust_msg = _resolve_k_clusters(k, N_SAMPLES)
+        if effective_k is None:
+            return adjust_msg
 
-        # 1. 计算标签
+        safe_print(f"正在导出结果至文件夹 (K={effective_k})...")
+
         features_for_clustering = PCA_FEATURES
-        kmeans = KMeans(n_clusters=k, random_state=42, n_init='auto')
+        kmeans = KMeans(n_clusters=effective_k, random_state=42, n_init='auto')
         labels = kmeans.fit_predict(features_for_clustering)
 
-        # 2. 准备导出目录
         export_dir = EXPORT_DIR
         if not os.path.exists(export_dir):
             os.makedirs(export_dir)
 
-        # 3. 按类保存
-        for cluster_id in range(k):
+        for cluster_id in range(effective_k):
             mask = (labels == cluster_id)
             cluster_df = df[mask][['skater', 'file', 'frame']]
             file_path = os.path.join(export_dir, f"{cluster_id}.csv")
@@ -463,7 +544,7 @@ def save_clustering_result(n_clicks, k):
         templates_data = {}
         for c_id, idx in enumerate(closest_indices):
             target_info = df.iloc[idx]
-            pose_data = np.load(target_info['path'])
+            pose_data = load_pose_sequence(target_info['path'])
             frame_idx = int(target_info['frame'])
             raw_pose = pose_data[frame_idx]
             aligned_pose = align_frame_by_mode(raw_pose, RIG_MODE)
@@ -483,10 +564,13 @@ def save_clustering_result(n_clicks, k):
             json.dump(templates_data, f, ensure_ascii=False, indent=4)
 
         safe_print(f"[OK] template saved: {template_file}")
-        return (
-            f"已成功导出 {k} 个分类文件至“{export_dir}”文件夹，"
+        result = (
+            f"已成功导出 {effective_k} 个分类文件至“{export_dir}”文件夹，"
             f"并创建模板动作字典库：{template_file}"
         )
+        if adjust_msg:
+            result = adjust_msg + " " + result
+        return result
     except Exception as e:
         safe_print(f"[ERROR] save failed: {type(e).__name__}: {e!r}")
         return f"保存失败: {type(e).__name__}: {e}"
@@ -511,8 +595,20 @@ def analyze_k_value(n_clicks):
     
     safe_print("开始分析 K 值趋势 (这可能需要几分钟)...")
     features_for_clustering = PCA_FEATURES
-    
-    k_range = range(8, 51)
+
+    if N_SAMPLES < 3:
+        empty = go.Figure()
+        empty.update_layout(title=f"样本仅 {N_SAMPLES} 帧，无法进行 K=8~50 趋势分析（至少需要 3 帧）")
+        return empty, {'height': '85vh', 'display': 'block'}, {'display': 'none'}
+
+    k_min = 2 if N_SAMPLES < 8 else 8
+    k_max = min(50, N_SAMPLES - 1)
+    if k_max < k_min:
+        empty = go.Figure()
+        empty.update_layout(title=f"样本数 {N_SAMPLES} 不足，K 趋势分析需要至少 {k_min + 1} 帧")
+        return empty, {'height': '85vh', 'display': 'block'}, {'display': 'none'}
+
+    k_range = range(k_min, k_max + 1)
     inertias = []
     silhouettes = []
     
@@ -586,7 +682,7 @@ def update_pose_preview(hoverData):
     
     try:
         # 按需加载对应文件的特定帧
-        pose_data = np.load(target_info['path'])
+        pose_data = load_pose_sequence(target_info['path'])
         frame_idx = int(target_info['frame'])
         raw_pose = pose_data[frame_idx]
         
