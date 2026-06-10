@@ -148,6 +148,52 @@ def _normalize_candidate(path_like):
     return PROJECT_ROOT / path
 
 
+SKELETON_SKIP_VIDEO_MSG = "Skeleton NPZ 数据无配套视频，已跳过视频匹配。"
+
+
+def is_skeleton_source(data_or_path) -> bool:
+    """判断模板/路径是否来自 skeleton NPZ（无配套 video/json）。"""
+    if isinstance(data_or_path, dict):
+        if str(data_or_path.get("data_format", "")).lower() == "skeleton_npz":
+            return True
+        rig_mode = str(data_or_path.get("rig_mode", "")).lower()
+        if rig_mode in ("skeleton_npz", "skeleton"):
+            return True
+        source_path = data_or_path.get("source_path") or data_or_path.get("source_file")
+        if source_path:
+            return is_skeleton_source(source_path)
+        return False
+
+    path_str = str(data_or_path or "").strip()
+    if not path_str:
+        return False
+    normalized = path_str.replace("\\", "/").lower()
+    if normalized.endswith(".npz"):
+        return True
+    return "skeleton" in normalized
+
+
+def build_skeleton_video_response(source_path=None, source_file=None, frame_idx=0):
+    """skeleton 模板：禁用视频控件，返回占位状态。"""
+    controls = build_video_control_props(None, 0)
+    return {
+        "camera_options": [{"label": "无需视频", "value": "none"}],
+        "camera_value": "none",
+        "video_store": {
+            "skip_video": True,
+            "source_path": source_path,
+            "source_file": source_file,
+            "frame_idx": int(frame_idx or 0),
+            "offset": 0,
+            "camera": "none",
+            "metadata": {},
+        },
+        "status": SKELETON_SKIP_VIDEO_MSG,
+        "frame_src": VIDEO_PLACEHOLDER,
+        "controls": controls,
+    }
+
+
 def _skater_from_source_path(source_path):
     if not source_path:
         return None
@@ -728,21 +774,24 @@ def render_template(cluster_id):
     source_path = data.get('source_path')
     source_file = data.get('source_file', '未知')
     frame_idx = int(data.get('frame_idx', 0) or 0)
-    
-    foot_points = load_foot_points(source_path, frame_idx, skeleton)
+    skip_video = is_skeleton_source(data)
+
+    foot_points = {} if skip_video else load_foot_points(source_path, frame_idx, skeleton)
     fig = create_pose_figure(skeleton, title=f"选定模型 - ID {cluster_id}", color='deepskyblue', extra_points=foot_points)
     
     info_text = f"📍 模板标识: 【 {data.get('label', '未标注')} 】\n"
     info_text += f"📂 萃取来源: {source_file}\n"
     info_text += f"🎞️ 所在原帧: 第 {frame_idx} 帧\n"
-    if foot_points:
+    if skip_video:
+        info_text += f"📹 视频: 无（Skeleton NPZ）\n"
+    elif foot_points:
         info_text += f"🦶 脚部 marker: 已加载 {len(foot_points)} 个\n"
     
     metadata = data.get('metadata', {})
     j_val = metadata.get('jump_type', None)
     
     # --- 💡 极速标注改进：根据路径智能推断 ---
-    if not j_val and source_path:
+    if not j_val and source_path and not skip_video:
         path_str = str(source_path).lower()
         if 'axel' in path_str: j_val = "A"
         elif 'toeloop' in path_str: j_val = "T"
@@ -756,6 +805,18 @@ def render_template(cluster_id):
     s_val = metadata.get('stage', None)
     t_val = metadata.get('temporal_flag', "S")
     u_val = metadata.get('action_units', [])
+
+    if skip_video:
+        skel_video = build_skeleton_video_response(source_path, source_file, frame_idx)
+        controls = skel_video["controls"]
+        return (
+            fig, info_text, j_val, s_val, t_val, u_val,
+            skel_video["camera_options"], skel_video["camera_value"],
+            skel_video["video_store"], skel_video["status"], skel_video["frame_src"],
+            controls["frame_min"], controls["frame_max"], controls["frame_value"],
+            controls["frame_marks"], controls["frame_disabled"],
+        )
+
     camera_options = discover_camera_options(source_path, source_file)
     camera_value = metadata.get('camera', 'cam_1') # 💡 改进：优先从已保存的元数据中读取视角
 
@@ -824,6 +885,19 @@ def update_video_camera(camera, video_store, current_frame):
             controls["frame_min"], controls["frame_max"], controls["frame_value"], controls["frame_marks"], controls["frame_disabled"],
         )
 
+    if video_store.get("skip_video"):
+        skel_video = build_skeleton_video_response(
+            video_store.get("source_path"),
+            video_store.get("source_file"),
+            video_store.get("frame_idx", 0),
+        )
+        controls = skel_video["controls"]
+        return (
+            skel_video["video_store"], skel_video["status"], skel_video["frame_src"],
+            controls["frame_min"], controls["frame_max"], controls["frame_value"],
+            controls["frame_marks"], controls["frame_disabled"],
+        )
+
     source_path = video_store.get("source_path")
     source_file = video_store.get("source_file")
     camera = camera or "cam_1"
@@ -879,6 +953,9 @@ def update_video_camera(camera, video_store, current_frame):
     prevent_initial_call=True
 )
 def update_video_frame(frame_idx, video_metadata):
+    if video_metadata and video_metadata.get("skip_video"):
+        return VIDEO_PLACEHOLDER, SKELETON_SKIP_VIDEO_MSG
+
     if not video_metadata or not video_metadata.get("metadata", {}).get("path"):
         return VIDEO_PLACEHOLDER, "未找到同源视频。"
 

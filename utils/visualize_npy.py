@@ -75,11 +75,22 @@ def show_3D_pose_static(pose3d: np.ndarray, connections: list, title: str = "3D 
     print(f"正在打开静态可视化窗口: {title}")
     fig.show()
 
-def show_3D_pose_animation(pose3d_seq: np.ndarray, connections: list, title: str = "3D 动画预览"):
+def show_3D_pose_animation(pose3d_seq: np.ndarray, connections: list, title: str = "3D 动画预览", fps: float = 20):
     """
     带有自动适配坐标轴的 3D 姿态动画。
+
+    参数:
+        fps: 基础播放帧率（1x 倍速对应的每秒帧数）。
     """
     num_frames = pose3d_seq.shape[0]
+    base_duration = max(1, round(1000 / fps))  # 每帧时长（毫秒）
+
+    def play_button(label, speed):
+        duration = max(1, round(base_duration / speed))
+        return dict(
+            label=label, method="animate",
+            args=[None, dict(frame=dict(duration=duration, redraw=True), fromcurrent=True)]
+        )
     
     # 计算整个序列的全局边界，确保播放过程中视角稳定
     x_min, x_max = np.min(pose3d_seq[:,:,0]), np.max(pose3d_seq[:,:,0])
@@ -94,7 +105,7 @@ def show_3D_pose_animation(pose3d_seq: np.ndarray, connections: list, title: str
     # 1. 布局配置：包含播放控制、进度条和坐标轴设定
     layout = go.Layout(
         title=title,
-        width=800, height=800,
+        width=1200, height=900,
         scene=dict(
             xaxis=dict(title='X', range=[x_min - pad_x, x_max + pad_x], visible=False),
             yaxis=dict(title='Y', range=[y_min - pad_y, y_max + pad_y], visible=False),
@@ -106,7 +117,10 @@ def show_3D_pose_animation(pose3d_seq: np.ndarray, connections: list, title: str
         updatemenus=[dict(
             type="buttons",
             buttons=[
-                dict(label="播放 (Play)", method="animate", args=[None, dict(frame=dict(duration=50, redraw=True), fromcurrent=True)]),
+                play_button("播放 0.5x", 0.5),
+                play_button("播放 1x", 1),
+                play_button("播放 2x", 2),
+                play_button("播放 4x", 4),
                 dict(label="暂停 (Pause)", method="animate", args=[[None], dict(frame=dict(duration=0, redraw=False), mode="immediate")])
             ],
             direction="left", pad={"r": 10, "t": 87}, x=0.1, y=0, xanchor="right", yanchor="top"
@@ -134,12 +148,36 @@ def show_3D_pose_animation(pose3d_seq: np.ndarray, connections: list, title: str
     print("正在浏览器中打开 3D 动画预览...")
     fig.show()
 
+def load_pose_data(path: str, key: str | None = None) -> np.ndarray:
+    """
+    加载 .npy 或 .npz 格式的 3D 位姿数据。
+    """
+    loaded = np.load(path)
+
+    if isinstance(loaded, np.lib.npyio.NpzFile):
+        try:
+            keys = loaded.files
+            if key is None:
+                if len(keys) != 1:
+                    raise ValueError(f".npz 文件包含多个数组，请使用 --key 指定其中一个: {keys}")
+                key = keys[0]
+            elif key not in keys:
+                raise KeyError(f".npz 文件中不存在键 {key!r}，可用键: {keys}")
+
+            return loaded[key]
+        finally:
+            loaded.close()
+
+    return loaded
+
 def main():
     # 命令行参数解析
-    parser = ArgumentParser(description="用于可视化 .npy 格式 3D 位姿数据的脚本。")
-    parser.add_argument("--path", type=str, default='./data/npy/Skater_A/Comb/Comb_1.npy', help=".npy 文件的路径。")
+    parser = ArgumentParser(description="用于可视化 .npy/.npz 格式 3D 位姿数据的脚本。")
+    parser.add_argument("--path", type=str, default='./data/testFineFS/0.npz', help=".npy 或 .npz 文件的路径。")
+    parser.add_argument("--key", type=str, default=None, help=".npz 文件中的数组键；单数组 .npz 可省略。")
     parser.add_argument("--frame", type=int, default=-1, help="指定显示的静态帧索引；若设为 -1（默认值）则进入动画模式。")
     parser.add_argument("--center", action="store_true", help="将骨架重心（髋部/节点0）置于原点中心。")
+    parser.add_argument("--fps", type=float, default=20, help="动画基础播放帧率（1x 倍速），默认 20。")
     
     args = parser.parse_args()
 
@@ -154,7 +192,7 @@ def main():
 
     try:
         # 加载数据
-        data = np.load(args.path)
+        data = load_pose_data(args.path, args.key)
         print(f"成功加载数据: {args.path}，形状: {data.shape}")
         
         # 中心化处理逻辑：所有关节点坐标减去根节点（髋部）的坐标
@@ -168,11 +206,11 @@ def main():
         # 根据参数选择显示模式
         if args.frame == -1:
             # 动画模式
-            show_3D_pose_animation(data, H36M_CONNECTIONS, title=f"文件: {filename}{title_suffix}")
+            show_3D_pose_animation(data, H36M_CONNECTIONS, title=f"文件: {filename}{title_suffix}", fps=args.fps)
         else:
             # 单帧静态模式
             if 0 <= args.frame < data.shape[0]:
-                show_3D_pose_static(data[args.frame], H36M_CONNECTIONS, title=f"文件: {filename}{title_suffix} | 帧耗: {args.frame}")
+                show_3D_pose_static(data[args.frame], H36M_CONNECTIONS, title=f"文件: {filename}{title_suffix} | 帧号: {args.frame}")
             else:
                 print(f"错误: 帧索引 {args.frame} 超出范围 (该文件总帧数为 {data.shape[0]})。")
             
