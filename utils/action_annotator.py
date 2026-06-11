@@ -52,59 +52,105 @@ PHASE_STAGES = [
 ]
 
 TEMPORAL_FLAGS = [
-    {"label": "单帧独立判定 (S)", "value": "S"},
-    {"label": "需时序相邻帧 (T)", "value": "T"}
+    {"label": "单帧独立判定 (F)", "value": "F"},
+    {"label": "需要时序相邻帧 (W)", "value": "W"}
 ]
 
 ACTION_UNITS = [
+    {"label": "H0: 头部直视/无明显动作", "value": "H0"},
     {"label": "H1: 头部左旋转", "value": "H1"},
     {"label": "H2: 头部右旋转", "value": "H2"},
     {"label": "H3: 头上仰", "value": "H3"},
     {"label": "H4: 头下低", "value": "H4"},
-    {"label": "H5: 头部直视前方", "value": "H5"},
     
-    {"label": "T1: 躯干左旋转", "value": "T1"},
-    {"label": "T2: 躯干右旋转", "value": "T2"},
-    {"label": "T3: 躯干前倾", "value": "T3"},
-    {"label": "T4: 躯干后仰", "value": "T4"},
-    {"label": "T5: 躯干左倾斜", "value": "T5"},
-    {"label": "T6: 躯干右倾斜", "value": "T6"},
-    {"label": "T7: 躯干直立", "value": "T7"},
+    {"label": "B0: 躯干直立/无明显动作", "value": "B0"},
+    {"label": "B1: 躯干左旋转", "value": "B1"},
+    {"label": "B2: 躯干右旋转", "value": "B2"},
+    {"label": "B3: 躯干前倾", "value": "B3"},
+    {"label": "B4: 躯干后仰", "value": "B4"},
+    {"label": "B5: 躯干左倾斜", "value": "B5"},
+    {"label": "B6: 躯干右倾斜", "value": "B6"},
     
-    {"label": "L1: 左上臂前屈", "value": "L1"},
-    {"label": "L2: 左上臂外展", "value": "L2"},
-    {"label": "L3: 左上臂后伸", "value": "L3"},
-    {"label": "L4: 左上臂内收", "value": "L4"},
-    {"label": "L5: 手掌打开", "value": "L5"},
-    {"label": "L6: 手掌握拳", "value": "L6"},
-    {"label": "L7: 左臂下垂", "value": "L7"},
+    {"label": "LS0: 左上臂下垂/无明显动作", "value": "LS0"},
+    {"label": "LS1: 左上臂前屈", "value": "LS1"},
+    {"label": "LS2: 左上臂外展", "value": "LS2"},
+    {"label": "LS3: 左上臂后伸", "value": "LS3"},
+    {"label": "LS4: 左上臂内收", "value": "LS4"},
+    {"label": "LE0: 左肘微弯/无明显动作", "value": "LE0"},
+    {"label": "LE1: 左肘弯曲", "value": "LE1"},
+    {"label": "LE2: 左肘伸直", "value": "LE2"},
     
-    {"label": "R1: 右上臂前屈", "value": "R1"},
-    {"label": "R2: 右上臂外展", "value": "R2"},
-    {"label": "R3: 右上臂后伸", "value": "R3"},
-    {"label": "R4: 右上臂内收", "value": "R4"},
-    {"label": "R5: 手掌打开", "value": "R5"},
-    {"label": "R6: 手掌握拳", "value": "R6"},
-    {"label": "R7: 右臂下垂", "value": "R7"},
+    {"label": "RS0: 右上臂下垂/无明显动作", "value": "RS0"},
+    {"label": "RS1: 右上臂前屈", "value": "RS1"},
+    {"label": "RS2: 右上臂外展", "value": "RS2"},
+    {"label": "RS3: 右上臂后伸", "value": "RS3"},
+    {"label": "RS4: 右上臂内收", "value": "RS4"},
+    {"label": "RE0: 右肘微弯/无明显动作", "value": "RE0"},
+    {"label": "RE1: 右肘弯曲", "value": "RE1"},
+    {"label": "RE2: 右肘伸直", "value": "RE2"},
     
-    {"label": "l1: 左髋前屈", "value": "l1"},
-    {"label": "l2: 左髋外展", "value": "l2"},
-    {"label": "l3: 左髋后伸", "value": "l3"},
-    {"label": "l4: 左髋内收", "value": "l4"},
-    {"label": "l5: 左膝弯曲", "value": "l5"},
-    {"label": "l6: 点冰（脚尖下压）", "value": "l6"},
-    {"label": "l7: 勾脚尖", "value": "l7"},
-    {"label": "l8: 左腿直立", "value": "l8"},
+    {"label": "LH0: 左髋直立/无明显动作", "value": "LH0"},
+    {"label": "LH1: 左髋前屈", "value": "LH1"},
+    {"label": "LH2: 左髋外展", "value": "LH2"},
+    {"label": "LH3: 左髋后伸", "value": "LH3"},
+    {"label": "LH4: 左髋内收", "value": "LH4"},
+    {"label": "LK0: 左膝微弯/无明显动作", "value": "LK0"},
+    {"label": "LK1: 左膝弯曲", "value": "LK1"},
+    {"label": "LK2: 左膝伸直", "value": "LK2"},
+    {"label": "LF1: 左脚点冰（脚尖下压）", "value": "LF1"},
+    {"label": "LF2: 左脚平滑", "value": "LF2"},
     
-    {"label": "r1: 右髋前屈", "value": "r1"},
-    {"label": "r2: 右髋外展", "value": "r2"},
-    {"label": "r3: 右髋后伸", "value": "r3"},
-    {"label": "r4: 右髋内收", "value": "r4"},
-    {"label": "r5: 右膝弯曲", "value": "r5"},
-    {"label": "r6: 点冰（脚尖下压）", "value": "r6"},
-    {"label": "r7: 勾脚尖", "value": "r7"},
-    {"label": "r8: 右腿直立", "value": "r8"}
+    {"label": "RH0: 右髋直立/无明显动作", "value": "RH0"},
+    {"label": "RH1: 右髋前屈", "value": "RH1"},
+    {"label": "RH2: 右髋外展", "value": "RH2"},
+    {"label": "RH3: 右髋后伸", "value": "RH3"},
+    {"label": "RH4: 右髋内收", "value": "RH4"},
+    {"label": "RK0: 右膝微弯/无明显动作", "value": "RK0"},
+    {"label": "RK1: 右膝弯曲", "value": "RK1"},
+    {"label": "RK2: 右膝伸直", "value": "RK2"},
+    {"label": "RF1: 点冰（脚尖下压）", "value": "RF1"},
+    {"label": "RF2: 右脚滑行", "value": "RF2"}
 ]
+
+DEFAULT_TEMPORAL_FLAG = "F"
+TEMPORAL_FLAG_ALIASES = {"S": "F", "T": "W"}
+ACTION_UNIT_PREFIX_ORDER = ["H", "B", "LS", "LE", "RS", "RE", "LH", "LK", "LF", "RH", "RK", "RF"]
+ACTION_UNIT_ALIASES = {
+    "H5": "H0",
+    "T1": "B1", "T2": "B2", "T3": "B3", "T4": "B4", "T5": "B5", "T6": "B6", "T7": "B0",
+    "L1": "LS1", "L2": "LS2", "L3": "LS3", "L4": "LS4", "L7": "LS0",
+    "R1": "RS1", "R2": "RS2", "R3": "RS3", "R4": "RS4", "R7": "RS0",
+    "l1": "LH1", "l2": "LH2", "l3": "LH3", "l4": "LH4", "l5": "LK1", "l6": "LF1", "l8": "LH0",
+    "r1": "RH1", "r2": "RH2", "r3": "RH3", "r4": "RH4", "r5": "RK1", "r6": "RF1", "r8": "RH0",
+}
+
+
+def normalize_temporal_flag(value):
+    if not value:
+        return DEFAULT_TEMPORAL_FLAG
+    return TEMPORAL_FLAG_ALIASES.get(value, value)
+
+
+def action_unit_sort_key(unit):
+    for prefix_index, prefix in enumerate(ACTION_UNIT_PREFIX_ORDER):
+        if unit.startswith(prefix):
+            suffix = unit[len(prefix):]
+            number = int(suffix) if suffix.isdigit() else 0
+            return prefix_index, number, unit
+    return len(ACTION_UNIT_PREFIX_ORDER), 0, unit
+
+
+def normalize_action_units(units):
+    if not units:
+        return []
+    normalized = []
+    seen = set()
+    for unit in units:
+        mapped = ACTION_UNIT_ALIASES.get(unit, unit)
+        if mapped not in seen:
+            normalized.append(mapped)
+            seen.add(mapped)
+    return sorted(normalized, key=action_unit_sort_key)
 # ===========================
 
 DB_PATH = os.environ.get("ACTION_TEMPLATE_FILE", "output/action_templates.json")
@@ -612,7 +658,7 @@ app.layout = html.Div([
                     dcc.Dropdown(id='dropdown-stage', options=PHASE_STAGES, placeholder="选择所处阶段..."),
                     
                     html.Label("时序依赖标志", style={'fontWeight': 'bold', 'marginTop': '10px', 'display': 'block'}),
-                    dcc.RadioItems(id='radio-temporal-flag', options=TEMPORAL_FLAGS, value="S", inline=True, style={'marginBottom': '10px'}),
+                    dcc.RadioItems(id='radio-temporal-flag', options=TEMPORAL_FLAGS, value=DEFAULT_TEMPORAL_FLAG, inline=True, style={'marginBottom': '10px'}),
                     
                     html.Label("动作单元 (多选)", style={'fontWeight': 'bold', 'marginTop': '10px', 'display': 'block'}),
                     dcc.Dropdown(id='dropdown-action-units', options=ACTION_UNITS, multi=True, placeholder="可选择多项组合...", closeOnSelect=False),
@@ -718,12 +764,11 @@ def initialize_dropdown_options(_):
 def update_preview(jump, stage, temporal, units):
     j_str = jump if jump else "?"
     s_str = stage if stage else "?"
-    t_str = temporal if temporal else "S"
+    t_str = normalize_temporal_flag(temporal)
     
-    # 💡 改进：按 H, T, L, R, l, r 顺序排序
+    # 按动作号码文件中的身体部位顺序排序，保证同一组动作编码稳定。
     if units:
-        order = {'H': 0, 'T': 1, 'L': 2, 'R': 3, 'l': 4, 'r': 5}
-        sorted_units = sorted(units, key=lambda x: (order.get(x[0], 99), int(x[1:]) if x[1:].isdigit() else 0))
+        sorted_units = normalize_action_units(units)
         u_str = "[" + ",".join(sorted_units) + "]"
     else:
         u_str = "[]"
@@ -755,7 +800,7 @@ def render_template(cluster_id):
     if cluster_id is None:
         controls = build_video_control_props(None, 0)
         return (
-            dash.no_update, "无展示数据。", None, None, "S", [],
+            dash.no_update, "无展示数据。", None, None, DEFAULT_TEMPORAL_FLAG, [],
             discover_camera_options(), "cam_1", {}, "无展示数据。", VIDEO_PLACEHOLDER,
             controls["frame_min"], controls["frame_max"], controls["frame_value"], controls["frame_marks"], controls["frame_disabled"],
         )
@@ -764,7 +809,7 @@ def render_template(cluster_id):
     if cluster_id not in db:
         controls = build_video_control_props(None, 0)
         return (
-            dash.no_update, "分类字典已损坏或缺失", None, None, "S", [],
+            dash.no_update, "分类字典已损坏或缺失", None, None, DEFAULT_TEMPORAL_FLAG, [],
             discover_camera_options(), "cam_1", {}, "分类字典已损坏或缺失。", VIDEO_PLACEHOLDER,
             controls["frame_min"], controls["frame_max"], controls["frame_value"], controls["frame_marks"], controls["frame_disabled"],
         )
@@ -803,8 +848,8 @@ def render_template(cluster_id):
     # ------------------------------------
 
     s_val = metadata.get('stage', None)
-    t_val = metadata.get('temporal_flag', "S")
-    u_val = metadata.get('action_units', [])
+    t_val = normalize_temporal_flag(metadata.get('temporal_flag', DEFAULT_TEMPORAL_FLAG))
+    u_val = normalize_action_units(metadata.get('action_units', []))
 
     if skip_video:
         skel_video = build_skeleton_video_response(source_path, source_file, frame_idx)
@@ -1000,12 +1045,11 @@ def save_custom_label(n_clicks, cid, jump, stage, temporal, units, camera):
         
     j_str = jump
     s_str = stage
-    t_str = temporal if temporal else "S"
+    t_str = normalize_temporal_flag(temporal)
     
-    # 💡 改进：保存时也进行自动排序
+    # 保存时也进行自动排序，和实时预览保持一致。
     if units:
-        order = {'H': 0, 'T': 1, 'L': 2, 'R': 3, 'l': 4, 'r': 5}
-        sorted_units = sorted(units, key=lambda x: (order.get(x[0], 99), int(x[1:]) if x[1:].isdigit() else 0))
+        sorted_units = normalize_action_units(units)
         u_str = "[" + ",".join(sorted_units) + "]"
     else:
         u_str = "[]"
@@ -1018,8 +1062,8 @@ def save_custom_label(n_clicks, cid, jump, stage, temporal, units, camera):
         db[cid]['metadata'] = {
             'jump_type': jump,
             'stage': stage,
-            'temporal_flag': temporal,
-            'action_units': units if units else [],
+            'temporal_flag': t_str,
+            'action_units': sorted_units if units else [],
             'camera': camera # 💡 记录视角，但这不会被合成到上面的 new_label 中
         }
         save_db(db)
