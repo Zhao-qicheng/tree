@@ -48,7 +48,8 @@ PHASE_STAGES = [
     {"label": "4: 起跳过渡", "value": "4"},
     {"label": "5: 空中旋转", "value": "5"},
     {"label": "6: 打开落冰准备", "value": "6"},
-    {"label": "7: 落冰与滑出", "value": "7"}
+    {"label": "7: 落冰后滑行", "value": "7"},
+    {"label": "8: 滑出", "value": "8"}
 ]
 
 TEMPORAL_FLAGS = [
@@ -111,6 +112,8 @@ ACTION_UNITS = [
     {"label": "RF1: 点冰（脚尖下压）", "value": "RF1"},
     {"label": "RF2: 右脚滑行", "value": "RF2"}
 ]
+ACTION_UNIT_VALUES = {item["value"] for item in ACTION_UNITS}
+ACTION_UNIT_LABELS = {item["value"]: item["label"] for item in ACTION_UNITS}
 
 DEFAULT_TEMPORAL_FLAG = "F"
 TEMPORAL_FLAG_ALIASES = {"S": "F", "T": "W"}
@@ -151,6 +154,82 @@ def normalize_action_units(units):
             normalized.append(mapped)
             seen.add(mapped)
     return sorted(normalized, key=action_unit_sort_key)
+
+
+def cluster_sort_key(cluster_id):
+    try:
+        return (0, int(cluster_id))
+    except (TypeError, ValueError):
+        return (1, str(cluster_id))
+
+
+def extract_action_units_from_label(label):
+    if not label:
+        return []
+
+    label_text = str(label)
+    start = label_text.find("[")
+    end = label_text.find("]", start + 1)
+    if start < 0 or end < 0:
+        return []
+
+    raw_units = [unit.strip() for unit in label_text[start + 1:end].split(",") if unit.strip()]
+    return [unit for unit in normalize_action_units(raw_units) if unit in ACTION_UNIT_VALUES]
+
+
+def get_template_action_units(template_data):
+    metadata = template_data.get("metadata", {}) or {}
+    units = metadata.get("action_units") or extract_action_units_from_label(template_data.get("label", ""))
+    return [unit for unit in normalize_action_units(units) if unit in ACTION_UNIT_VALUES]
+
+
+def search_templates_by_action_units(query_units, match_mode="all"):
+    db = load_db()
+    normalized_query = [unit for unit in normalize_action_units(query_units or []) if unit in ACTION_UNIT_VALUES]
+    query_set = set(normalized_query)
+    matches = []
+
+    for cluster_id, template_data in db.items():
+        template_units = get_template_action_units(template_data)
+        if not template_units:
+            continue
+
+        template_set = set(template_units)
+        if not query_set:
+            is_match = True
+        elif match_mode == "any":
+            is_match = bool(query_set & template_set)
+        elif match_mode == "exact":
+            is_match = query_set == template_set
+        else:
+            is_match = query_set.issubset(template_set)
+
+        if not is_match:
+            continue
+
+        overlap_count = len(query_set & template_set) if query_set else len(template_set)
+        matches.append({
+            "cluster_id": str(cluster_id),
+            "data": template_data,
+            "units": template_units,
+            "overlap_count": overlap_count,
+        })
+
+    matches.sort(key=lambda item: (-item["overlap_count"], len(item["units"]), cluster_sort_key(item["cluster_id"])))
+    return matches
+
+
+def build_unit_search_option(match):
+    cluster_id = match["cluster_id"]
+    data = match["data"]
+    units_text = ",".join(match["units"])
+    source_file = data.get("source_file", "未知")
+    frame_idx = data.get("frame_idx", "?")
+    label = data.get("label", "未标注")
+    return {
+        "label": f"簇 {cluster_id} | 第 {frame_idx} 帧 | {source_file} | {label} | [{units_text}]",
+        "value": cluster_id,
+    }
 # ===========================
 
 DB_PATH = os.environ.get("ACTION_TEMPLATE_FILE", "output/action_templates.json")
@@ -557,6 +636,191 @@ def align_skeleton(frame):
     aligned = normalize_skeleton(aligned)
     return aligned
 
+
+def _safe_angle_degrees(a, b, c):
+    """计算 a-b-c 三点在 b 点处的夹角。"""
+    v1 = np.asarray(a, dtype=float) - np.asarray(b, dtype=float)
+    v2 = np.asarray(c, dtype=float) - np.asarray(b, dtype=float)
+    n1 = np.linalg.norm(v1)
+    n2 = np.linalg.norm(v2)
+    if n1 < 1e-6 or n2 < 1e-6:
+        return None
+    cosine = float(np.dot(v1, v2) / (n1 * n2))
+    cosine = max(-1.0, min(1.0, cosine))
+    return float(np.degrees(np.arccos(cosine)))
+
+
+def _classify_flexion(angle, bent_code, straight_code, neutral_code=None, notes=None, label="关节"):
+    if angle is None:
+        if notes is not None:
+            notes.append(f"{label}角度不可用")
+        return neutral_code or straight_code
+    if angle < 130:
+        return bent_code
+    if angle < 160:
+        return neutral_code or straight_code
+    return straight_code
+
+
+def _classify_upper_arm(pose, shoulder_idx, elbow_idx, side_code, notes, label):
+    shoulder = pose[shoulder_idx]
+    elbow = pose[elbow_idx]
+    chest = pose[8]
+    vec = elbow - shoulder
+    length = np.linalg.norm(vec)
+    if length < 1e-6:
+        notes.append(f"{label}上臂向量不可用")
+        return f"{side_code}0"
+
+    x, y, z = vec / length
+    side_sign = np.sign(shoulder[0] - chest[0])
+    if side_sign == 0:
+        side_sign = 1 if side_code == "LS" else -1
+
+    horizontal = max(abs(x), abs(y))
+    if abs(x) >= 0.30 and abs(x) >= abs(y):
+        return f"{side_code}2" if np.sign(x) == side_sign else f"{side_code}4"
+    # 当前标注页骨架对齐后，+X 约为身体左侧，-Y 约为身体前方。
+    if y <= -0.38:
+        return f"{side_code}1"
+    if y >= 0.38:
+        return f"{side_code}3"
+    if z < -0.70 and horizontal < 0.45:
+        return f"{side_code}0"
+
+    notes.append(f"{label}上臂方向不明显，默认无明显动作")
+    return f"{side_code}0"
+
+
+def _classify_hip_motion(pose, hip_idx, knee_idx, side_code, notes, label):
+    hip = pose[hip_idx]
+    knee = pose[knee_idx]
+    root = pose[0]
+    vec = knee - hip
+    length = np.linalg.norm(vec)
+    if length < 1e-6:
+        notes.append(f"{label}髋/大腿方向不可用")
+        return f"{side_code}0"
+
+    x, y, z = vec / length
+    side_sign = np.sign(hip[0] - root[0])
+    if side_sign == 0:
+        side_sign = 1 if side_code == "LH" else -1
+
+    if z < -0.70 and max(abs(x), abs(y)) < 0.48:
+        return f"{side_code}0"
+    if abs(y) >= abs(x) and abs(y) >= 0.35:
+        return f"{side_code}1" if y < 0 else f"{side_code}3"
+    if abs(x) >= 0.35:
+        return f"{side_code}2" if np.sign(x) == side_sign else f"{side_code}4"
+
+    notes.append(f"{label}髋/大腿方向不明显，默认无明显动作")
+    return f"{side_code}0"
+
+
+def _classify_torso(pose, notes):
+    hip = pose[0]
+    chest = pose[8]
+    vec = chest - hip
+    length = np.linalg.norm(vec)
+    if length < 1e-6:
+        notes.append("躯干方向不可用，默认 B0")
+        return "B0"
+
+    x, y, z = vec / length
+    horizontal = max(abs(x), abs(y))
+    if horizontal < 0.30 or abs(z) >= 0.88:
+        return "B0"
+    if abs(y) >= abs(x):
+        return "B3" if y < 0 else "B4"
+    return "B6" if x > 0 else "B5"
+
+
+def _classify_head(pose, notes):
+    neck = pose[9]
+    head = pose[10]
+    vec = head - neck
+    length = np.linalg.norm(vec)
+    if length < 1e-6:
+        notes.append("头部方向不可用，默认 H0")
+        return "H0"
+
+    _, y, z = vec / length
+    if z < 0.45:
+        return "H4"
+    if z > 0.80 and abs(y) > 0.35:
+        return "H3"
+    notes.append("头部姿态采用保守默认 H0")
+    return "H0"
+
+
+def _classify_foot_markers(foot_points, prefix, toe_name, heel_name, notes):
+    if not foot_points:
+        return None
+    toe = foot_points.get(toe_name)
+    heel = foot_points.get(heel_name)
+    if toe is None or heel is None:
+        notes.append(f"{prefix}脚部 marker 不完整，未推荐脚部动作")
+        return None
+
+    toe = np.asarray(toe, dtype=float)
+    heel = np.asarray(heel, dtype=float)
+    vertical_delta = toe[2] - heel[2]
+    if vertical_delta < -35:
+        return f"{prefix}1"
+    if abs(vertical_delta) <= 25:
+        return f"{prefix}2"
+    notes.append(f"{prefix}脚尖/脚跟高度差不稳定，未推荐脚部动作")
+    return None
+
+
+def auto_recommend_action_units(skeleton, foot_points=None):
+    pose = np.asarray(skeleton, dtype=float)
+    notes = []
+    if pose.shape != (17, 3):
+        return {
+            "action_units": [],
+            "temporal_flag": DEFAULT_TEMPORAL_FLAG,
+            "confidence": "低",
+            "notes": [f"骨架形状应为 (17, 3)，实际为 {pose.shape}"],
+        }
+
+    units = [
+        _classify_head(pose, notes),
+        _classify_torso(pose, notes),
+        _classify_upper_arm(pose, 11, 12, "LS", notes, "左"),
+        _classify_flexion(_safe_angle_degrees(pose[11], pose[12], pose[13]), "LE1", "LE2", "LE0", notes, "左肘"),
+        _classify_upper_arm(pose, 14, 15, "RS", notes, "右"),
+        _classify_flexion(_safe_angle_degrees(pose[14], pose[15], pose[16]), "RE1", "RE2", "RE0", notes, "右肘"),
+        _classify_hip_motion(pose, 4, 5, "LH", notes, "左"),
+        _classify_flexion(_safe_angle_degrees(pose[4], pose[5], pose[6]), "LK1", "LK2", "LK0", notes, "左膝"),
+        _classify_hip_motion(pose, 1, 2, "RH", notes, "右"),
+        _classify_flexion(_safe_angle_degrees(pose[1], pose[2], pose[3]), "RK1", "RK2", "RK0", notes, "右膝"),
+    ]
+
+    left_foot = _classify_foot_markers(foot_points, "LF", "L_Toe", "LHEL", notes)
+    right_foot = _classify_foot_markers(foot_points, "RF", "R_Toe", "RHEL", notes)
+    if left_foot:
+        units.append(left_foot)
+    if right_foot:
+        units.append(right_foot)
+
+    units = normalize_action_units([unit for unit in units if unit in ACTION_UNIT_VALUES])
+    if len(notes) <= 2:
+        confidence = "高"
+    elif len(notes) <= 5:
+        confidence = "中"
+    else:
+        confidence = "低"
+
+    return {
+        "action_units": units,
+        "temporal_flag": DEFAULT_TEMPORAL_FLAG,
+        "confidence": confidence,
+        "notes": notes,
+    }
+
+
 # 生成 3D 图形的通用 Helper
 def create_pose_figure(aligned_pose, title="动作展示", color='red', extra_points=None):
     if aligned_pose is None or len(aligned_pose) == 0:
@@ -662,6 +926,8 @@ app.layout = html.Div([
                     
                     html.Label("动作单元 (多选)", style={'fontWeight': 'bold', 'marginTop': '10px', 'display': 'block'}),
                     dcc.Dropdown(id='dropdown-action-units', options=ACTION_UNITS, multi=True, placeholder="可选择多项组合...", closeOnSelect=False),
+                    html.Button("自动推荐动作单元", id='auto-recommend-btn', n_clicks=0, style={'marginTop': '10px', 'padding': '8px 14px', 'backgroundColor': '#1971c2', 'color': 'white', 'border': 'none', 'cursor': 'pointer', 'borderRadius': '5px', 'fontWeight': 'bold'}),
+                    html.Div(id='auto-recommend-msg', style={'marginTop': '8px', 'whiteSpace': 'pre-wrap', 'color': '#495057', 'fontSize': '13px'}),
                     
                     html.Div(id='label-preview', style={'marginTop': '15px', 'padding': '10px', 'fontFamily': 'monospace', 'backgroundColor': '#e9ecef', 'borderRadius': '5px', 'fontSize': '16px', 'fontWeight': 'bold'}),
                     
@@ -736,6 +1002,90 @@ app.layout = html.Div([
                     ], style={'width': '48%', 'display': 'inline-block', 'float': 'right'})
                 ])
             ], style={'padding': '30px'})
+        ]),
+
+        # ====================== [板块 3] : 动作单元模板检索 ======================
+        dcc.Tab(label='🔎 动作单元模板检索', children=[
+            html.Div([
+                html.Div([
+                    html.Div([
+                        html.Label("搜索动作单元", style={'fontWeight': 'bold', 'display': 'block', 'marginBottom': '6px'}),
+                        dcc.Dropdown(
+                            id='unit-search-dropdown',
+                            options=ACTION_UNITS,
+                            multi=True,
+                            placeholder="选择一个或多个动作单元，例如 H0、B3、LK1...",
+                            closeOnSelect=False,
+                        )
+                    ], style={'width': '68%', 'display': 'inline-block', 'verticalAlign': 'top'}),
+                    html.Div([
+                        html.Label("匹配模式", style={'fontWeight': 'bold', 'display': 'block', 'marginBottom': '6px'}),
+                        dcc.RadioItems(
+                            id='unit-search-mode',
+                            options=[
+                                {'label': '包含全部', 'value': 'all'},
+                                {'label': '包含任一', 'value': 'any'},
+                                {'label': '完全一致', 'value': 'exact'},
+                            ],
+                            value='all',
+                            inline=True,
+                            inputStyle={'marginRight': '4px', 'marginLeft': '10px'}
+                        )
+                    ], style={'width': '30%', 'display': 'inline-block', 'verticalAlign': 'top', 'marginLeft': '2%'})
+                ], style={'padding': '18px 20px', 'backgroundColor': '#f8f9fa', 'borderBottom': '1px solid #dee2e6'}),
+
+                html.Div(id='unit-search-count', style={'padding': '10px 20px', 'fontWeight': 'bold', 'color': '#495057'}),
+
+                html.Div([
+                    html.Div([
+                        html.H3("返回的模板帧", style={'marginTop': 0}),
+                        dcc.RadioItems(
+                            id='unit-search-result-list',
+                            options=[],
+                            value=None,
+                            labelStyle={
+                                'display': 'block',
+                                'padding': '10px 12px',
+                                'marginBottom': '8px',
+                                'border': '1px solid #dee2e6',
+                                'borderRadius': '6px',
+                                'backgroundColor': 'white',
+                                'cursor': 'pointer',
+                                'lineHeight': '1.45'
+                            },
+                            inputStyle={'marginRight': '8px'}
+                        )
+                    ], style={
+                        'width': '36%',
+                        'display': 'inline-block',
+                        'verticalAlign': 'top',
+                        'height': '68vh',
+                        'overflowY': 'auto',
+                        'padding': '20px',
+                        'boxSizing': 'border-box',
+                        'backgroundColor': '#f1f3f5'
+                    }),
+
+                    html.Div([
+                        html.H3("选中模板骨架", style={'textAlign': 'center', 'margin': '0 0 8px 0'}),
+                        dcc.Graph(id='unit-search-pose-graph', style={'height': '55vh', 'width': '100%'}),
+                        html.Div(id='unit-search-template-info', style={
+                            'whiteSpace': 'pre-wrap',
+                            'backgroundColor': '#f8f9fa',
+                            'padding': '14px',
+                            'borderRadius': '6px',
+                            'border': '1px solid #dee2e6',
+                            'color': '#343a40'
+                        })
+                    ], style={
+                        'width': '64%',
+                        'display': 'inline-block',
+                        'verticalAlign': 'top',
+                        'padding': '20px',
+                        'boxSizing': 'border-box'
+                    })
+                ])
+            ])
         ])
     ])
 ])
@@ -750,8 +1100,83 @@ def initialize_dropdown_options(_):
     if not db:
         return []
     options = [{'label': f"簇 {cid} ({db[cid]['label']})", 'value': cid} 
-               for cid in sorted(db.keys(), key=lambda x: int(x))]
+               for cid in sorted(db.keys(), key=cluster_sort_key)]
     return options
+
+
+@app.callback(
+    [Output('unit-search-result-list', 'options'),
+     Output('unit-search-result-list', 'value'),
+     Output('unit-search-count', 'children')],
+    [Input('unit-search-dropdown', 'value'),
+     Input('unit-search-mode', 'value')]
+)
+def update_unit_search_results(query_units, match_mode):
+    db = load_db()
+    if not db:
+        return [], None, "模板库为空，请先保存带动作单元标签的模板帧。"
+
+    matches = search_templates_by_action_units(query_units, match_mode)
+    if not matches:
+        return [], None, "未找到匹配模板。可以减少动作单元，或切换为“包含任一”。"
+
+    options = [build_unit_search_option(match) for match in matches]
+    selected_value = options[0]["value"]
+    query_text = "、".join(normalize_action_units(query_units or [])) or "全部已标注动作单元"
+    mode_text = {"all": "包含全部", "any": "包含任一", "exact": "完全一致"}.get(match_mode, "包含全部")
+    return options, selected_value, f"搜索：{query_text} | 模式：{mode_text} | 返回 {len(options)} 个模板帧"
+
+
+@app.callback(
+    [Output('unit-search-pose-graph', 'figure'),
+     Output('unit-search-template-info', 'children')],
+    Input('unit-search-result-list', 'value')
+)
+def render_unit_search_template(cluster_id):
+    if not cluster_id:
+        return create_pose_figure(None, title="请选择左侧模板帧"), "请选择左侧返回的模板帧。"
+
+    db = load_db()
+    data = db.get(str(cluster_id))
+    if not data:
+        return create_pose_figure(None, title="模板不存在"), "模板库中未找到该记录。"
+
+    try:
+        skeleton = np.asarray(data.get('skeleton'), dtype=float)
+    except Exception as exc:
+        return create_pose_figure(None, title="骨架读取失败"), f"骨架数据读取失败：{exc}"
+
+    source_path = data.get('source_path')
+    source_file = data.get('source_file', '未知')
+    frame_idx = int(data.get('frame_idx', 0) or 0)
+    skip_video = is_skeleton_source(data)
+    foot_points = {} if skip_video else load_foot_points(source_path, frame_idx, skeleton)
+    fig = create_pose_figure(
+        skeleton,
+        title=f"动作单元检索结果 - 簇 {cluster_id}",
+        color='#1971c2',
+        extra_points=foot_points
+    )
+
+    units = get_template_action_units(data)
+    unit_lines = []
+    for unit in units:
+        unit_lines.append(ACTION_UNIT_LABELS.get(unit, unit))
+
+    info_text = f"模板标识：{data.get('label', '未标注')}\n"
+    info_text += f"簇 ID：{cluster_id}\n"
+    info_text += f"来源文件：{source_file}\n"
+    info_text += f"所在原帧：第 {frame_idx} 帧\n"
+    info_text += f"动作单元：{', '.join(units) if units else '无'}"
+    if unit_lines:
+        info_text += "\n动作单元说明：\n" + "\n".join(unit_lines)
+    if skip_video:
+        info_text += "\n视频：无（Skeleton NPZ）"
+    elif foot_points:
+        info_text += f"\n脚部 marker：已加载 {len(foot_points)} 个"
+
+    return fig, info_text
+
 
 # 实时预览回调
 @app.callback(
@@ -775,6 +1200,49 @@ def update_preview(jump, stage, temporal, units):
     
     preview_text = f"{j_str}-{s_str}-{t_str}-{u_str}"
     return f"🏷️ 预览编码格式: {preview_text}"
+
+
+@app.callback(
+    [Output('radio-temporal-flag', 'value', allow_duplicate=True),
+     Output('dropdown-action-units', 'value', allow_duplicate=True),
+     Output('auto-recommend-msg', 'children')],
+    Input('auto-recommend-btn', 'n_clicks'),
+    State('template-dropdown', 'value'),
+    prevent_initial_call=True
+)
+def apply_auto_recommendation(n_clicks, cluster_id):
+    if not cluster_id:
+        return dash.no_update, dash.no_update, "请先选择一个动作集群。"
+
+    db = load_db()
+    data = db.get(cluster_id)
+    if not data:
+        return dash.no_update, dash.no_update, "未找到当前动作集群，无法推荐。"
+
+    try:
+        skeleton = np.asarray(data.get('skeleton'), dtype=float)
+    except Exception as exc:
+        return dash.no_update, dash.no_update, f"骨架数据读取失败：{exc}"
+
+    source_path = data.get('source_path')
+    frame_idx = int(data.get('frame_idx', 0) or 0)
+    foot_points = {} if is_skeleton_source(data) else load_foot_points(source_path, frame_idx, skeleton)
+    recommendation = auto_recommend_action_units(skeleton, foot_points=foot_points)
+    units = recommendation["action_units"]
+    temporal = recommendation["temporal_flag"]
+    confidence = recommendation["confidence"]
+    notes = recommendation["notes"]
+
+    if units:
+        unit_text = ",".join(units)
+        msg = f"推荐完成：动作单元 {len(units)} 项，置信度：{confidence}。\n推荐：[{unit_text}]\n阶段建议人工确认。"
+    else:
+        msg = f"未生成有效动作单元，置信度：{confidence}。请人工标注。"
+    if notes:
+        msg += "\n注意：" + "；".join(notes[:4])
+
+    return temporal, units, msg
+
 
 @app.callback(
     [Output('template-pose-graph', 'figure'),
