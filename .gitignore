@@ -31,4 +31,21 @@ output/
 
 # 本地路径配置（每人自行创建，不提交到 git）
 .env
+
+# Local video-to-3D-pose pipeline assets
+input_videos/
+outputs/
+test/
+
+# Large local media/checkpoint files
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+*.pth
+*.pth.tr
+*.pt
+*.ckpt
+*.onnx
 # .env.example 是模板，保留在 git 中
