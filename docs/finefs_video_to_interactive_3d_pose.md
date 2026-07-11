@@ -10,6 +10,46 @@
 4. AP3D 权重：`https://github.com/calvinyeungck/AthletePose3D`
 5. 待处理视频，例如：`input_videos\finefs_test\`
 
+## 推荐：一键运行完整视频
+
+如果只是想跑一个完整视频，不需要逐个修改多个 py 文件。推荐使用总入口脚本：
+
+```powershell
+cd C:\Users\86158\Desktop\八叉树
+conda activate mmpose
+
+$ROOT = "C:\Users\86158\Desktop\八叉树"
+
+python "$ROOT\scripts\run_video_pose_pipeline.py" `
+  --name test `
+  --video-dir "$ROOT\input_videos\finefs_test" `
+  --mmpose-root "C:\Users\86158\Desktop\mmpose-main" `
+  --motionagformer-root "C:\Users\86158\Desktop\MotionAGFormer-master" `
+  --checkpoint "$ROOT\test\motionagformer-s-ap3d.pth.tr" `
+  --fps 30 `
+  --device cpu
+```
+
+其中 `--name test` 对应输入视频：
+
+```text
+input_videos\finefs_test\test.mp4
+```
+
+如果你想通过改 py 文件来切换测试视频，只需要改：
+
+```python
+DEFAULT_VIDEO_NAME = "test"
+```
+
+文件位置：
+
+```text
+scripts\run_video_pose_pipeline.py
+```
+
+不建议去修改 `select_main_skater_h36m.py`、`lift_2d_to_3d_motionagformer_ap3d.py`、`build_interactive_3d_viewer.py` 里的路径，因为这些是功能脚本，应该保持通用。
+
 ## 运行一个新视频
 
 在 PowerShell 中进入项目根目录：
