@@ -14,6 +14,7 @@ DEFAULT_VIDEO_DIR = ROOT / "input_videos" / "finefs_test"
 DEFAULT_MMPOSE_ROOT = Path(r"C:\Users\86158\Desktop\mmpose-main")
 DEFAULT_MOTIONAGFORMER_ROOT = Path(r"C:\Users\86158\Desktop\MotionAGFormer-master")
 DEFAULT_AP3D_CHECKPOINT = ROOT / "test" / "motionagformer-s-ap3d.pth.tr"
+DEFAULT_POSE2D = "body"
 DEFAULT_DET_WEIGHTS = (
     Path.home()
     / ".cache"
@@ -74,16 +75,48 @@ def require_dir(path, label):
     log(f"Found {label}: {path}")
 
 
+def is_url(value):
+    return str(value).startswith(("http://", "https://"))
+
+
+def maybe_require_path(value, label):
+    if not value or is_url(value):
+        return
+    path = Path(str(value))
+    if path.suffix:
+        require_file(path, label)
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Run the full FineFS video -> 2D pose -> H36M -> 3D pose -> interactive viewer pipeline."
     )
     parser.add_argument("--name", default=DEFAULT_VIDEO_NAME, help="Video stem, for example: test")
     parser.add_argument("--video", help="Full video path. Overrides --name and --video-dir.")
+    parser.add_argument(
+        "--output-name",
+        default="",
+        help="Optional output stem. Useful when running multiple models on the same video.",
+    )
     parser.add_argument("--video-dir", default=str(DEFAULT_VIDEO_DIR), help="Directory containing <name>.mp4")
     parser.add_argument("--mmpose-root", default=str(DEFAULT_MMPOSE_ROOT))
     parser.add_argument("--motionagformer-root", default=str(DEFAULT_MOTIONAGFORMER_ROOT))
     parser.add_argument("--checkpoint", default=str(DEFAULT_AP3D_CHECKPOINT))
+    parser.add_argument(
+        "--pred-json",
+        default="",
+        help="Existing MMPose prediction JSON. If set, MMPose inference is skipped.",
+    )
+    parser.add_argument(
+        "--pose2d",
+        default=DEFAULT_POSE2D,
+        help="MMPose 2D pose alias or config path. Default: body",
+    )
+    parser.add_argument(
+        "--pose2d-weights",
+        default="",
+        help="Optional MMPose 2D pose checkpoint path or URL.",
+    )
     parser.add_argument("--det-model", help="Person detector config. Defaults to mmpose demo rtmdet config.")
     parser.add_argument("--det-weights", default=str(DEFAULT_DET_WEIGHTS), help="Person detector checkpoint.")
     parser.add_argument("--fps", type=float, default=DEFAULT_FPS)
@@ -103,27 +136,41 @@ def main():
     pipeline_start = perf_counter()
 
     video_path = Path(args.video) if args.video else Path(args.video_dir) / f"{args.name}.mp4"
-    name = video_path.stem
+    video_name = video_path.stem
+    output_name = args.output_name or video_name
     mmpose_root = Path(args.mmpose_root)
     motionagformer_root = Path(args.motionagformer_root)
     checkpoint = Path(args.checkpoint)
-    det_model = Path(args.det_model) if args.det_model else mmpose_root / "demo" / "mmdetection_cfg" / "rtmdet_m_640-8xb32_coco-person.py"
-    det_weights = Path(args.det_weights)
+    det_model = (
+        args.det_model
+        if args.det_model
+        else mmpose_root / "demo" / "mmdetection_cfg" / "rtmdet_m_640-8xb32_coco-person.py"
+    )
+    det_weights = args.det_weights
     py_cmd = python_command(args)
 
     log("Pipeline started")
-    log(f"Video name: {name}")
+    log(f"Video name: {video_name}")
+    log(f"Output name: {output_name}")
     log(f"Python command: {' '.join(str(part) for part in py_cmd)}")
     log(f"Device: {args.device}")
     log(f"FPS for viewer: {args.fps}")
+    log(f"2D pose model: {args.pose2d}")
+    if args.pose2d_weights:
+        log(f"2D pose weights: {args.pose2d_weights}")
+    if args.pred_json:
+        args.skip_mmpose = True
+        log(f"Reusing MMPose prediction JSON: {args.pred_json}")
 
     log("CHECK input paths")
     require_file(video_path, "Input video")
     require_dir(mmpose_root, "MMPose root")
     require_dir(motionagformer_root, "MotionAGFormer root")
     require_file(checkpoint, "AP3D checkpoint")
-    require_file(det_model, "Person detector config")
-    require_file(det_weights, "Person detector checkpoint")
+    maybe_require_path(args.pose2d, "2D pose config")
+    maybe_require_path(args.pose2d_weights, "2D pose checkpoint")
+    maybe_require_path(det_model, "Person detector config")
+    maybe_require_path(det_weights, "Person detector checkpoint")
 
     mmpose_demo = mmpose_root / "demo" / "inferencer_demo.py"
     mag_config = motionagformer_root / "configs" / "h36m" / "MotionAGFormer-small.yaml"
@@ -131,44 +178,48 @@ def main():
     require_file(mag_config, "MotionAGFormer config")
     log("DONE input path check")
 
-    pred_dir = ROOT / "outputs" / f"mmpose_pred_{name}"
-    vis_dir = ROOT / "outputs" / f"mmpose_vis_{name}"
-    pred_json = pred_dir / f"{name}.json"
+    pred_dir = ROOT / "outputs" / f"mmpose_pred_{output_name}"
+    vis_dir = ROOT / "outputs" / f"mmpose_vis_{output_name}"
+    pred_json = Path(args.pred_json) if args.pred_json else pred_dir / f"{video_name}.json"
 
-    h36m_npz = ROOT / "outputs" / "processed_2d" / f"{name}_h36m.npz"
-    h36m_json = ROOT / "outputs" / "processed_2d" / f"{name}_h36m.json"
-    h36m_vis = ROOT / "outputs" / "processed_2d" / f"{name}_h36m_vis.mp4"
+    h36m_npz = ROOT / "outputs" / "processed_2d" / f"{output_name}_h36m.npz"
+    h36m_json = ROOT / "outputs" / "processed_2d" / f"{output_name}_h36m.json"
+    h36m_vis = ROOT / "outputs" / "processed_2d" / f"{output_name}_h36m_vis.mp4"
 
-    pose3d_npz = ROOT / "outputs" / "processed_3d" / f"{name}_ap3d_motionagformer.npz"
-    pose3d_json = ROOT / "outputs" / "processed_3d" / f"{name}_ap3d_motionagformer.json"
-    pose3d_vis = ROOT / "outputs" / "processed_3d" / f"{name}_ap3d_motionagformer_vis.mp4"
+    pose3d_npz = ROOT / "outputs" / "processed_3d" / f"{output_name}_ap3d_motionagformer.npz"
+    pose3d_json = ROOT / "outputs" / "processed_3d" / f"{output_name}_ap3d_motionagformer.json"
+    pose3d_vis = ROOT / "outputs" / "processed_3d" / f"{output_name}_ap3d_motionagformer_vis.mp4"
 
     interactive_dir = ROOT / "outputs" / "interactive_3d"
-    interactive_frames = interactive_dir / f"{name}_frames_left"
-    interactive_html = interactive_dir / f"{name}_interactive_3d.html"
+    interactive_frames = interactive_dir / f"{output_name}_frames_left"
+    interactive_html = interactive_dir / f"{output_name}_interactive_3d.html"
 
     if not args.skip_mmpose:
+        mmpose_cmd = py_cmd + [
+            mmpose_demo,
+            video_path,
+            "--pose2d",
+            args.pose2d,
+        ]
+        if args.pose2d_weights:
+            mmpose_cmd += ["--pose2d-weights", args.pose2d_weights]
+        mmpose_cmd += [
+            "--device",
+            args.device,
+            "--det-model",
+            det_model,
+            "--det-weights",
+            det_weights,
+            "--det-cat-ids",
+            "0",
+            "--show-progress",
+            "--pred-out-dir",
+            pred_dir,
+            "--vis-out-dir",
+            vis_dir,
+        ]
         run_command(
-            py_cmd
-            + [
-                mmpose_demo,
-                video_path,
-                "--pose2d",
-                "body",
-                "--device",
-                args.device,
-                "--det-model",
-                det_model,
-                "--det-weights",
-                det_weights,
-                "--det-cat-ids",
-                "0",
-                "--show-progress",
-                "--pred-out-dir",
-                pred_dir,
-                "--vis-out-dir",
-                vis_dir,
-            ],
+            mmpose_cmd,
             "1/4 MMPose 2D pose inference",
         )
     else:
@@ -244,7 +295,7 @@ def main():
                 "--out-html",
                 interactive_html,
                 "--title",
-                f"{name} Interactive 2D / 3D Skeleton",
+                f"{output_name} Interactive 2D / 3D Skeleton",
                 "--fps",
                 str(args.fps),
             ],
