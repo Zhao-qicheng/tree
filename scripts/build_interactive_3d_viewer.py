@@ -84,6 +84,33 @@ def compact_pose_data(poses):
     return rounded.tolist()
 
 
+def estimate_radius(poses, percentile=99.0, padding=1.25, min_radius=1.0):
+    finite_abs = np.abs(poses[np.isfinite(poses)])
+    if finite_abs.size == 0:
+        return min_radius
+    radius = float(np.percentile(finite_abs, percentile) * padding)
+    return max(radius, min_radius)
+
+
+def estimate_body_height(poses):
+    heights = poses[:, :, 2].max(axis=1) - poses[:, :, 2].min(axis=1)
+    heights = heights[np.isfinite(heights) & (heights > 1e-6)]
+    if heights.size == 0:
+        return 0.0
+    return float(np.median(heights))
+
+
+def estimate_skeleton_scale(poses, radius, target_body_height_ratio, max_skeleton_scale):
+    body_height = estimate_body_height(poses)
+    if body_height <= 0:
+        return 1.0
+    target_height = 2.0 * radius * target_body_height_ratio
+    scale = target_height / body_height
+    # The automatic scale should only enlarge small skeletons. Users can still
+    # shrink or enlarge it from the HTML controls.
+    return float(min(max(scale, 1.0), max_skeleton_scale))
+
+
 HTML_TEMPLATE = """<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -269,6 +296,8 @@ HTML_TEMPLATE = """<!doctype html>
           <button id="viewSide" type="button">Side</button>
           <button id="viewTop" type="button">Top</button>
           <button id="viewVideo" type="button">Video-like</button>
+          <button id="skeletonBigger" type="button">Skeleton +</button>
+          <button id="skeletonSmaller" type="button">Skeleton -</button>
           <button id="zoomIn" type="button">Zoom +</button>
           <button id="zoomOut" type="button">Zoom -</button>
           <span class="hint" id="angleLabel"></span>
@@ -298,6 +327,7 @@ HTML_TEMPLATE = """<!doctype html>
     const leftDir = "__LEFT_DIR__";
     const fps = __FPS__;
     const radius = __RADIUS__;
+    const initialSkeletonScale = __SKELETON_SCALE__;
     const lastFrame = poseData.length - 1;
 
     const canvas = document.getElementById("scene");
@@ -318,6 +348,7 @@ HTML_TEMPLATE = """<!doctype html>
     let yaw = -0.86;
     let pitch = -0.32;
     let zoom = 1.08;
+    let skeletonScale = initialSkeletonScale;
     let isDragging = false;
     let lastPointer = { x: 0, y: 0 };
 
@@ -335,9 +366,9 @@ HTML_TEMPLATE = """<!doctype html>
     }
 
     function rotatePoint(p) {
-      const x = p[0];
-      const y = p[1];
-      const z = p[2];
+      const x = p[0] * skeletonScale;
+      const y = p[1] * skeletonScale;
+      const z = p[2] * skeletonScale;
       const cy = Math.cos(yaw);
       const sy = Math.sin(yaw);
       const cp = Math.cos(pitch);
@@ -446,7 +477,7 @@ HTML_TEMPLATE = """<!doctype html>
       drawText("X", [radius * 0.82, 0, 0], "#ef4444", rect);
       drawText("Y", [0, radius * 0.82, 0], "#2563eb", rect);
       drawText("Z", [0, 0, radius * 0.82], "#16a34a", rect);
-      angleLabel.textContent = `yaw ${(yaw * 180 / Math.PI).toFixed(0)} deg / pitch ${(pitch * 180 / Math.PI).toFixed(0)} deg / zoom ${zoom.toFixed(2)}x`;
+      angleLabel.textContent = `yaw ${(yaw * 180 / Math.PI).toFixed(0)} deg / pitch ${(pitch * 180 / Math.PI).toFixed(0)} deg / zoom ${zoom.toFixed(2)}x / skeleton ${skeletonScale.toFixed(2)}x`;
     }
 
     function setFrame(value) {
@@ -516,6 +547,14 @@ HTML_TEMPLATE = """<!doctype html>
     document.getElementById("viewSide").addEventListener("click", () => setView(-Math.PI / 2, 0, 1.15));
     document.getElementById("viewTop").addEventListener("click", () => setView(-0.6, -1.35, 1.0));
     document.getElementById("viewVideo").addEventListener("click", () => setView(-0.18, -0.18, 1.18));
+    document.getElementById("skeletonBigger").addEventListener("click", () => {
+      skeletonScale = Math.min(8.0, skeletonScale * 1.15);
+      drawScene();
+    });
+    document.getElementById("skeletonSmaller").addEventListener("click", () => {
+      skeletonScale = Math.max(0.25, skeletonScale / 1.15);
+      drawScene();
+    });
     document.getElementById("zoomIn").addEventListener("click", () => setView(yaw, pitch, zoom * 1.15));
     document.getElementById("zoomOut").addEventListener("click", () => setView(yaw, pitch, zoom / 1.15));
 
@@ -593,6 +632,11 @@ def main():
     parser.add_argument("--title", default="Interactive 2D / 3D Skeleton Viewer")
     parser.add_argument("--fps", type=float, default=29.0)
     parser.add_argument("--radius", type=float)
+    parser.add_argument("--radius-percentile", type=float, default=99.0)
+    parser.add_argument("--radius-padding", type=float, default=1.25)
+    parser.add_argument("--skeleton-scale", type=float)
+    parser.add_argument("--target-body-height-ratio", type=float, default=0.65)
+    parser.add_argument("--max-skeleton-scale", type=float, default=4.0)
     args = parser.parse_args()
 
     out_html = Path(args.out_html)
@@ -603,7 +647,20 @@ def main():
     display = np.stack([to_display_coords(pose) for pose in pred3d], axis=0)
     radius = args.radius
     if radius is None:
-        radius = float(max(np.max(np.abs(display)) * 1.18, 1.0))
+        radius = estimate_radius(
+            display,
+            percentile=args.radius_percentile,
+            padding=args.radius_padding,
+        )
+    if args.skeleton_scale is None:
+        skeleton_scale = estimate_skeleton_scale(
+            display,
+            radius,
+            target_body_height_ratio=args.target_body_height_ratio,
+            max_skeleton_scale=args.max_skeleton_scale,
+        )
+    else:
+        skeleton_scale = args.skeleton_scale
 
     if args.left_video:
         left_dir = Path(args.extract_frame_dir) if args.extract_frame_dir else out_html.parent / "frames" / "left"
@@ -630,11 +687,13 @@ def main():
     html_text = html_text.replace("__LEFT_DIR__", html_relative_dir(left_dir, out_html.parent))
     html_text = html_text.replace("__FPS__", f"{args.fps:.8f}")
     html_text = html_text.replace("__RADIUS__", f"{radius:.6f}")
+    html_text = html_text.replace("__SKELETON_SCALE__", f"{skeleton_scale:.6f}")
     html_text = html_text.replace("__LAST_FRAME__", str(len(display) - 1))
 
     out_html.write_text(html_text, encoding="utf-8")
     print(f"frames: {len(display)}")
     print(f"radius: {radius:.3f}")
+    print(f"skeleton scale: {skeleton_scale:.3f}")
     print(f"saved: {out_html}")
 
 

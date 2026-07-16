@@ -9,7 +9,7 @@ from time import perf_counter
 ROOT = Path(__file__).resolve().parents[1]
 
 # Edit these defaults if you prefer running this script without command args.
-DEFAULT_VIDEO_NAME = "test"
+DEFAULT_VIDEO_NAME = "test1"
 DEFAULT_VIDEO_DIR = ROOT / "input_videos" / "finefs_test"
 DEFAULT_MMPOSE_ROOT = Path(r"C:\Users\86158\Desktop\mmpose-main")
 DEFAULT_MOTIONAGFORMER_ROOT = Path(r"C:\Users\86158\Desktop\MotionAGFormer-master")
@@ -22,7 +22,7 @@ DEFAULT_DET_WEIGHTS = (
     / "checkpoints"
     / "rtmdet_m_8xb32-100e_coco-obj365-person-235e8209.pth"
 )
-DEFAULT_FPS = 30
+DEFAULT_FPS = 25
 DEFAULT_DEVICE = "cpu"
 DEFAULT_CONDA_ENV = "mmpose"
 
