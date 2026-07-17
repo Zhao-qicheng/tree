@@ -9,12 +9,17 @@ from time import perf_counter
 ROOT = Path(__file__).resolve().parents[1]
 
 # Edit these defaults if you prefer running this script without command args.
-DEFAULT_VIDEO_NAME = "test1"
+DEFAULT_VIDEO_NAME = "test2"
 DEFAULT_VIDEO_DIR = ROOT / "input_videos" / "finefs_test"
 DEFAULT_MMPOSE_ROOT = Path(r"C:\Users\86158\Desktop\mmpose-main")
 DEFAULT_MOTIONAGFORMER_ROOT = Path(r"C:\Users\86158\Desktop\MotionAGFormer-master")
 DEFAULT_AP3D_CHECKPOINT = ROOT / "test" / "motionagformer-s-ap3d.pth.tr"
-DEFAULT_POSE2D = "body"
+DEFAULT_POSE2D = ROOT / "configs" / "rtmpose-x_8xb256-700e_coco-384x288_local.py"
+DEFAULT_POSE2D_WEIGHTS = (
+    ROOT
+    / "test"
+    / "rtmpose-x_simcc-body7_pt-body7_700e-384x288-71d7b7e9_20230629.pth"
+)
 DEFAULT_DET_WEIGHTS = (
     Path.home()
     / ".cache"
@@ -23,7 +28,7 @@ DEFAULT_DET_WEIGHTS = (
     / "checkpoints"
     / "rtmdet_m_8xb32-100e_coco-obj365-person-235e8209.pth"
 )
-DEFAULT_FPS = 25
+DEFAULT_FPS = 30
 DEFAULT_DEVICE = "cpu"
 DEFAULT_CONDA_ENV = "mmpose"
 
@@ -109,13 +114,13 @@ def parse_args():
     )
     parser.add_argument(
         "--pose2d",
-        default=DEFAULT_POSE2D,
-        help="MMPose 2D pose alias or config path. Default: body",
+        default=str(DEFAULT_POSE2D),
+        help="MMPose 2D pose alias or config path. Default: local RTMPose-x config",
     )
     parser.add_argument(
         "--pose2d-weights",
-        default="",
-        help="Optional MMPose 2D pose checkpoint path or URL.",
+        default=str(DEFAULT_POSE2D_WEIGHTS),
+        help="MMPose 2D pose checkpoint path or URL. Default: local RTMPose-x checkpoint.",
     )
     parser.add_argument("--det-model", help="Person detector config. Defaults to mmpose demo rtmdet config.")
     parser.add_argument("--det-weights", default=str(DEFAULT_DET_WEIGHTS), help="Person detector checkpoint.")
