@@ -211,17 +211,27 @@ HTML_TEMPLATE = r"""<!doctype html>
       color: var(--text);
       background: #243044;
     }
+    .joint.low {
+      color: #fde68a;
+      background: #2a2112;
+    }
+    .joint.low.active {
+      color: #fff7c2;
+      background: #3a2d16;
+    }
     .joint .dot {
       width: 11px;
       height: 11px;
       border-radius: 50%;
       background: var(--blue);
     }
+    .joint.low .dot { background: var(--yellow); }
     .joint.edited .dot { background: var(--pink); }
     .score {
       color: var(--muted);
       font-variant-numeric: tabular-nums;
     }
+    .joint.low .score { color: #fde68a; }
     .small {
       color: var(--muted);
       font-size: 12px;
@@ -344,6 +354,7 @@ HTML_TEMPLATE = r"""<!doctype html>
     const playPause = document.getElementById("playPause");
     const undoBtn = document.getElementById("undoBtn");
     const speed = document.getElementById("speed");
+    const scoreThresholdInput = document.getElementById("scoreThreshold");
 
     video.src = videoSrc;
     timeline.max = String(lastFrame);
@@ -398,10 +409,16 @@ HTML_TEMPLATE = r"""<!doctype html>
       return frames[frame].keypoints;
     }
 
+    function lowConfidenceThreshold() {
+      const value = Number(scoreThresholdInput.value);
+      return Number.isFinite(value) ? value : 0.25;
+    }
+
     function draw() {
       const rect = canvas.getBoundingClientRect();
       ctx.clearRect(0, 0, rect.width, rect.height);
       const pose = currentPose();
+      const threshold = lowConfidenceThreshold();
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
 
@@ -420,7 +437,7 @@ HTML_TEMPLATE = r"""<!doctype html>
         const p = toCanvas(pose[i]);
         const score = Number(pose[i][2] || 0);
         ctx.beginPath();
-        ctx.fillStyle = edited[frame][i] ? "#ec4899" : score < 0.25 ? "#f59e0b" : "#111827";
+        ctx.fillStyle = edited[frame][i] ? "#ec4899" : score < threshold ? "#f59e0b" : "#111827";
         ctx.strokeStyle = i === selectedJoint ? "#fef08a" : "#ffffff";
         ctx.lineWidth = i === selectedJoint ? 3 : 1.5;
         ctx.arc(p.x, p.y, i === selectedJoint ? 7 : 5, 0, Math.PI * 2);
@@ -438,11 +455,15 @@ HTML_TEMPLATE = r"""<!doctype html>
 
     function updateJointPanel() {
       const pose = currentPose();
+      const threshold = lowConfidenceThreshold();
       for (const el of jointList.children) {
         const j = Number(el.dataset.joint);
+        const score = Number(pose[j][2] || 0);
         el.classList.toggle("active", j === selectedJoint);
         el.classList.toggle("edited", edited[frame][j]);
-        el.querySelector(".score").textContent = Number(pose[j][2] || 0).toFixed(2);
+        el.classList.toggle("low", score < threshold);
+        el.title = score < threshold ? `low confidence: ${score.toFixed(3)} < ${threshold}` : "";
+        el.querySelector(".score").textContent = score.toFixed(2);
       }
       jointSelect.value = String(selectedJoint);
     }
@@ -559,6 +580,20 @@ HTML_TEMPLATE = r"""<!doctype html>
         if (edited[i].some(Boolean)) out.push(i);
       }
       return out;
+    }
+
+    function findNextLowConfidence(threshold) {
+      const joints = jointNames.length;
+      const start = frame * joints + selectedJoint + 1;
+      for (let flat = start; flat < frames.length * joints; flat += 1) {
+        const nextFrame = Math.floor(flat / joints);
+        const nextJoint = flat % joints;
+        const score = Number(frames[nextFrame].keypoints[nextJoint][2] || 0);
+        if (score < threshold) {
+          return { frame: nextFrame, joint: nextJoint, score };
+        }
+      }
+      return null;
     }
 
     function makeExportPayload() {
@@ -681,6 +716,10 @@ HTML_TEMPLATE = r"""<!doctype html>
       updateJointPanel();
       draw();
     });
+    scoreThresholdInput.addEventListener("change", () => {
+      updateJointPanel();
+      draw();
+    });
 
     document.getElementById("saveBtn").addEventListener("click", () => saveJson(true).catch((err) => alert(err.message)));
     document.getElementById("downloadBtn").addEventListener("click", () => saveJson(false));
@@ -721,13 +760,16 @@ HTML_TEMPLATE = r"""<!doctype html>
       if (keys.length) setFrame(keys[0]);
     });
     document.getElementById("nextLowBtn").addEventListener("click", () => {
-      const thr = Number(document.getElementById("scoreThreshold").value);
-      for (let i = frame + 1; i <= lastFrame; i += 1) {
-        if (frames[i].keypoints.some((p) => Number(p[2] || 0) < thr)) {
-          setFrame(i);
-          return;
-        }
+      const thr = lowConfidenceThreshold();
+      const found = findNextLowConfidence(thr);
+      if (found) {
+        selectedJoint = found.joint;
+        setFrame(found.frame);
+        const item = jointList.querySelector(`[data-joint="${found.joint}"]`);
+        if (item) item.scrollIntoView({ block: "nearest" });
+        return;
       }
+      alert(`No more joints below ${thr}.`);
     });
 
     window.addEventListener("keydown", (event) => {
