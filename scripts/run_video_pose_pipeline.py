@@ -145,7 +145,24 @@ def parse_args():
         action="store_true",
         help="Do not write visualization videos during refinement stages",
     )
+    parser.add_argument(
+        "--output-dir",
+        default="",
+        help="Root directory for pipeline outputs. Default: <repo>/outputs. "
+        "When skipping a stage, missing inputs are also looked up under <repo>/outputs.",
+    )
     return parser.parse_args()
+
+
+def resolve_existing(preferred, fallback, label):
+    preferred = Path(preferred)
+    fallback = Path(fallback)
+    if preferred.is_file():
+        return preferred
+    if fallback != preferred and fallback.is_file():
+        log(f"Reuse existing {label} from default outputs: {fallback}")
+        return fallback
+    return preferred
 
 
 def main():
@@ -199,25 +216,56 @@ def main():
     require_file(mag_config, "MotionAGFormer config")
     log("DONE input path check")
 
-    pred_dir = ROOT / "outputs" / f"mmpose_pred_{output_name}"
-    vis_dir = ROOT / "outputs" / f"mmpose_vis_{output_name}"
+    default_output_dir = ROOT / "outputs"
+    output_dir = Path(args.output_dir) if args.output_dir else default_output_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
+    log(f"Output directory: {output_dir}")
+
+    pred_dir = output_dir / f"mmpose_pred_{output_name}"
+    vis_dir = output_dir / f"mmpose_vis_{output_name}"
+    default_pred_json = default_output_dir / f"mmpose_pred_{output_name}" / f"{video_name}.json"
     pred_json = Path(args.pred_json) if args.pred_json else pred_dir / f"{video_name}.json"
+    if args.skip_mmpose and not args.pred_json:
+        pred_json = resolve_existing(pred_json, default_pred_json, "MMPose prediction JSON")
 
-    h36m_npz = ROOT / "outputs" / "processed_2d" / f"{output_name}_h36m.npz"
-    h36m_json = ROOT / "outputs" / "processed_2d" / f"{output_name}_h36m.json"
-    h36m_vis = ROOT / "outputs" / "processed_2d" / f"{output_name}_h36m_vis.mp4"
-    h36m_refined_npz = ROOT / "outputs" / "processed_2d" / f"{output_name}_h36m_refined.npz"
-    h36m_refined_json = ROOT / "outputs" / "processed_2d" / f"{output_name}_h36m_refined.json"
-    h36m_refined_vis = ROOT / "outputs" / "processed_2d" / f"{output_name}_h36m_refined_vis.mp4"
+    processed_2d = output_dir / "processed_2d"
+    processed_3d = output_dir / "processed_3d"
+    default_2d = default_output_dir / "processed_2d"
+    default_3d = default_output_dir / "processed_3d"
+    processed_2d.mkdir(parents=True, exist_ok=True)
+    processed_3d.mkdir(parents=True, exist_ok=True)
 
-    pose3d_npz = ROOT / "outputs" / "processed_3d" / f"{output_name}_ap3d_motionagformer.npz"
-    pose3d_json = ROOT / "outputs" / "processed_3d" / f"{output_name}_ap3d_motionagformer.json"
-    pose3d_vis = ROOT / "outputs" / "processed_3d" / f"{output_name}_ap3d_motionagformer_vis.mp4"
-    pose3d_refined_npz = ROOT / "outputs" / "processed_3d" / f"{output_name}_ap3d_motionagformer_refined.npz"
-    pose3d_refined_json = ROOT / "outputs" / "processed_3d" / f"{output_name}_ap3d_motionagformer_refined.json"
-    pose3d_refined_vis = ROOT / "outputs" / "processed_3d" / f"{output_name}_ap3d_motionagformer_refined_vis.mp4"
+    h36m_npz = processed_2d / f"{output_name}_h36m.npz"
+    h36m_json = processed_2d / f"{output_name}_h36m.json"
+    h36m_vis = processed_2d / f"{output_name}_h36m_vis.mp4"
+    if args.skip_2d:
+        h36m_npz = resolve_existing(h36m_npz, default_2d / f"{output_name}_h36m.npz", "H36M 2D NPZ")
+        h36m_json = resolve_existing(h36m_json, default_2d / f"{output_name}_h36m.json", "H36M 2D JSON")
+        h36m_vis = resolve_existing(h36m_vis, default_2d / f"{output_name}_h36m_vis.mp4", "H36M 2D visualization video")
+    h36m_refined_npz = processed_2d / f"{output_name}_h36m_refined.npz"
+    h36m_refined_json = processed_2d / f"{output_name}_h36m_refined.json"
+    h36m_refined_vis = processed_2d / f"{output_name}_h36m_refined_vis.mp4"
+    compare_2d_json = processed_2d / f"{output_name}_h36m_refine_compare.json"
 
-    interactive_dir = ROOT / "outputs" / "interactive_3d"
+    pose3d_npz = processed_3d / f"{output_name}_ap3d_motionagformer.npz"
+    pose3d_json = processed_3d / f"{output_name}_ap3d_motionagformer.json"
+    pose3d_vis = processed_3d / f"{output_name}_ap3d_motionagformer_vis.mp4"
+    if args.skip_3d:
+        pose3d_npz = resolve_existing(
+            pose3d_npz, default_3d / f"{output_name}_ap3d_motionagformer.npz", "3D pose NPZ"
+        )
+        pose3d_json = resolve_existing(
+            pose3d_json, default_3d / f"{output_name}_ap3d_motionagformer.json", "3D pose JSON"
+        )
+        pose3d_vis = resolve_existing(
+            pose3d_vis, default_3d / f"{output_name}_ap3d_motionagformer_vis.mp4", "3D visualization video"
+        )
+    pose3d_refined_npz = processed_3d / f"{output_name}_ap3d_motionagformer_refined.npz"
+    pose3d_refined_json = processed_3d / f"{output_name}_ap3d_motionagformer_refined.json"
+    pose3d_refined_vis = processed_3d / f"{output_name}_ap3d_motionagformer_refined_vis.mp4"
+    compare_3d_json = processed_3d / f"{output_name}_ap3d_motionagformer_refine_compare.json"
+
+    interactive_dir = output_dir / "interactive_3d"
     interactive_frames = interactive_dir / f"{output_name}_frames_left"
     interactive_html = interactive_dir / f"{output_name}_interactive_3d.html"
 
@@ -303,7 +351,6 @@ def main():
         if not args.skip_refinement_view and h36m_refined_vis.is_file():
             viewer_left_video = h36m_refined_vis
         log(f"Output refined H36M NPZ: {h36m_refined_npz}")
-        compare_2d_json = ROOT / "outputs" / "processed_2d" / f"{output_name}_h36m_refine_compare.json"
         run_command(
             py_cmd
             + [
@@ -376,7 +423,6 @@ def main():
         require_file(pose3d_refined_npz, "Refined 3D pose NPZ")
         viewer_3d_npz = pose3d_refined_npz
         log(f"Output refined 3D NPZ: {pose3d_refined_npz}")
-        compare_3d_json = ROOT / "outputs" / "processed_3d" / f"{output_name}_ap3d_motionagformer_refine_compare.json"
         run_command(
             py_cmd
             + [

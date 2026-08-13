@@ -1,4 +1,4 @@
-_base_ = [r'C:/Users/86158/Desktop/mmpose-main/configs/_base_/default_runtime.py']
+_base_ = [r'D:/work/mmpose/configs/_base_/default_runtime.py']  #这里修改路径，原路径为C:/Users/86158/Desktop/mmpose-main/configs/_base_/default_runtime.py
 
 # common setting
 num_keypoints = 17
