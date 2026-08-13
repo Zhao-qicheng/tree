@@ -92,7 +92,12 @@ def load_motionagformer(motionagformer_root, config_path, checkpoint_path, devic
 
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     state_dict = checkpoint["model"] if "model" in checkpoint else checkpoint
-    state_dict = {key.removeprefix("module."): value for key, value in state_dict.items()}
+    state_dict = {
+    key[7:] if key.startswith("module.") else key: value
+    for key, value in state_dict.items()
+}
+    #这里是Python版本兼容曾出现问题，改成兼容3.9的mmpose就可以，下一行是原95行内容
+    #state_dict = {key.removeprefix("module."): value for key, value in state_dict.items()}
     missing, unexpected = model.load_state_dict(state_dict, strict=False)
     if missing or unexpected:
         raise RuntimeError(f"Checkpoint mismatch. missing={missing[:5]}, unexpected={unexpected[:5]}")

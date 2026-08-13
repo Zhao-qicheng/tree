@@ -9,10 +9,10 @@ from time import perf_counter
 ROOT = Path(__file__).resolve().parents[1]
 
 # Edit these defaults if you prefer running this script without command args.
-DEFAULT_VIDEO_NAME = "test2"
+DEFAULT_VIDEO_NAME = "2019美国站fs_final"
 DEFAULT_VIDEO_DIR = ROOT / "input_videos" / "finefs_test"
-DEFAULT_MMPOSE_ROOT = Path(r"C:\Users\86158\Desktop\mmpose-main")
-DEFAULT_MOTIONAGFORMER_ROOT = Path(r"C:\Users\86158\Desktop\MotionAGFormer-master")
+DEFAULT_MMPOSE_ROOT = Path(r"D:\work\mmpose")   #C:\Users\86158\Desktop\mmpose-main
+DEFAULT_MOTIONAGFORMER_ROOT = Path(r"D:\work\MotionAGFormer") #D:\work\MotionAGFormer C:\Users\86158\Desktop\MotionAGFormer-master
 DEFAULT_AP3D_CHECKPOINT = ROOT / "test" / "motionagformer-s-ap3d.pth.tr"
 DEFAULT_POSE2D = ROOT / "configs" / "rtmpose-x_8xb256-700e_coco-384x288_local.py"
 DEFAULT_POSE2D_WEIGHTS = (
@@ -133,6 +133,18 @@ def parse_args():
     parser.add_argument("--skip-2d", action="store_true", help="Reuse existing H36M 2D output")
     parser.add_argument("--skip-3d", action="store_true", help="Reuse existing 3D output")
     parser.add_argument("--skip-viewer", action="store_true", help="Do not generate interactive HTML")
+    parser.add_argument("--refine-2d", action="store_true", help="Run optional 2D confidence repair and One Euro filtering")
+    parser.add_argument("--refine-3d", action="store_true", help="Run optional 3D bone/angle constraints after lifting")
+    parser.add_argument(
+        "--refinement-config",
+        default=str(ROOT / "configs" / "pose_refinement_default.json"),
+        help="JSON config for 2D/3D pose refinement",
+    )
+    parser.add_argument(
+        "--skip-refinement-view",
+        action="store_true",
+        help="Do not write visualization videos during refinement stages",
+    )
     return parser.parse_args()
 
 
@@ -163,6 +175,8 @@ def main():
     log(f"2D pose model: {args.pose2d}")
     if args.pose2d_weights:
         log(f"2D pose weights: {args.pose2d_weights}")
+    log(f"Refine 2D: {args.refine_2d}")
+    log(f"Refine 3D: {args.refine_3d}")
     if args.pred_json:
         args.skip_mmpose = True
         log(f"Reusing MMPose prediction JSON: {args.pred_json}")
@@ -176,6 +190,8 @@ def main():
     maybe_require_path(args.pose2d_weights, "2D pose checkpoint")
     maybe_require_path(det_model, "Person detector config")
     maybe_require_path(det_weights, "Person detector checkpoint")
+    if args.refine_2d or args.refine_3d:
+        require_file(Path(args.refinement_config), "Pose refinement config")
 
     mmpose_demo = mmpose_root / "demo" / "inferencer_demo.py"
     mag_config = motionagformer_root / "configs" / "h36m" / "MotionAGFormer-small.yaml"
@@ -190,10 +206,16 @@ def main():
     h36m_npz = ROOT / "outputs" / "processed_2d" / f"{output_name}_h36m.npz"
     h36m_json = ROOT / "outputs" / "processed_2d" / f"{output_name}_h36m.json"
     h36m_vis = ROOT / "outputs" / "processed_2d" / f"{output_name}_h36m_vis.mp4"
+    h36m_refined_npz = ROOT / "outputs" / "processed_2d" / f"{output_name}_h36m_refined.npz"
+    h36m_refined_json = ROOT / "outputs" / "processed_2d" / f"{output_name}_h36m_refined.json"
+    h36m_refined_vis = ROOT / "outputs" / "processed_2d" / f"{output_name}_h36m_refined_vis.mp4"
 
     pose3d_npz = ROOT / "outputs" / "processed_3d" / f"{output_name}_ap3d_motionagformer.npz"
     pose3d_json = ROOT / "outputs" / "processed_3d" / f"{output_name}_ap3d_motionagformer.json"
     pose3d_vis = ROOT / "outputs" / "processed_3d" / f"{output_name}_ap3d_motionagformer_vis.mp4"
+    pose3d_refined_npz = ROOT / "outputs" / "processed_3d" / f"{output_name}_ap3d_motionagformer_refined.npz"
+    pose3d_refined_json = ROOT / "outputs" / "processed_3d" / f"{output_name}_ap3d_motionagformer_refined.json"
+    pose3d_refined_vis = ROOT / "outputs" / "processed_3d" / f"{output_name}_ap3d_motionagformer_refined_vis.mp4"
 
     interactive_dir = ROOT / "outputs" / "interactive_3d"
     interactive_frames = interactive_dir / f"{output_name}_frames_left"
@@ -257,13 +279,60 @@ def main():
     log(f"Output H36M NPZ: {h36m_npz}")
     log(f"Output H36M video: {h36m_vis}")
 
+    lift_input_2d = h36m_npz
+    viewer_left_video = h36m_vis
+    if args.refine_2d:
+        refine_2d_cmd = py_cmd + [
+            ROOT / "scripts" / "refine_2d_h36m.py",
+            "--input-2d-npz",
+            h36m_npz,
+            "--out-npz",
+            h36m_refined_npz,
+            "--out-json",
+            h36m_refined_json,
+            "--config",
+            args.refinement_config,
+            "--fps",
+            str(args.fps),
+        ]
+        if not args.skip_refinement_view:
+            refine_2d_cmd += ["--video", video_path, "--vis-out", h36m_refined_vis]
+        run_command(refine_2d_cmd, "2b/4 H36M 2D pose refinement")
+        require_file(h36m_refined_npz, "Refined H36M 2D NPZ")
+        lift_input_2d = h36m_refined_npz
+        if not args.skip_refinement_view and h36m_refined_vis.is_file():
+            viewer_left_video = h36m_refined_vis
+        log(f"Output refined H36M NPZ: {h36m_refined_npz}")
+        compare_2d_json = ROOT / "outputs" / "processed_2d" / f"{output_name}_h36m_refine_compare.json"
+        run_command(
+            py_cmd
+            + [
+                ROOT / "scripts" / "compare_pose_refinement.py",
+                "--before",
+                h36m_npz,
+                "--after",
+                h36m_refined_npz,
+                "--mode",
+                "2d",
+                "--fps",
+                str(args.fps),
+                "--config",
+                args.refinement_config,
+                "--out-json",
+                compare_2d_json,
+            ],
+            "2b/4 H36M 2D refinement quality report",
+        )
+    else:
+        log("SKIP 2b/4 H36M 2D pose refinement")
+
     if not args.skip_3d:
         run_command(
             py_cmd
             + [
                 ROOT / "scripts" / "lift_2d_to_3d_motionagformer_ap3d.py",
                 "--input-2d-npz",
-                h36m_npz,
+                lift_input_2d,
                 "--checkpoint",
                 checkpoint,
                 "--motionagformer-root",
@@ -286,15 +355,59 @@ def main():
     require_file(pose3d_npz, "3D pose NPZ")
     log(f"Output 3D NPZ: {pose3d_npz}")
 
+    viewer_3d_npz = pose3d_npz
+    if args.refine_3d:
+        refine_3d_cmd = py_cmd + [
+            ROOT / "scripts" / "refine_3d_pose.py",
+            "--input-3d-npz",
+            pose3d_npz,
+            "--out-npz",
+            pose3d_refined_npz,
+            "--out-json",
+            pose3d_refined_json,
+            "--config",
+            args.refinement_config,
+            "--fps",
+            str(args.fps),
+        ]
+        if not args.skip_refinement_view:
+            refine_3d_cmd += ["--vis-out", pose3d_refined_vis]
+        run_command(refine_3d_cmd, "3b/4 3D pose constraint refinement")
+        require_file(pose3d_refined_npz, "Refined 3D pose NPZ")
+        viewer_3d_npz = pose3d_refined_npz
+        log(f"Output refined 3D NPZ: {pose3d_refined_npz}")
+        compare_3d_json = ROOT / "outputs" / "processed_3d" / f"{output_name}_ap3d_motionagformer_refine_compare.json"
+        run_command(
+            py_cmd
+            + [
+                ROOT / "scripts" / "compare_pose_refinement.py",
+                "--before",
+                pose3d_npz,
+                "--after",
+                pose3d_refined_npz,
+                "--mode",
+                "3d",
+                "--fps",
+                str(args.fps),
+                "--config",
+                args.refinement_config,
+                "--out-json",
+                compare_3d_json,
+            ],
+            "3b/4 3D refinement quality report",
+        )
+    else:
+        log("SKIP 3b/4 3D pose constraint refinement")
+
     if not args.skip_viewer:
         run_command(
             py_cmd
             + [
                 ROOT / "scripts" / "build_interactive_3d_viewer.py",
                 "--input-3d-npz",
-                pose3d_npz,
+                viewer_3d_npz,
                 "--left-video",
-                h36m_vis,
+                viewer_left_video,
                 "--extract-frame-dir",
                 interactive_frames,
                 "--out-html",
@@ -313,7 +426,7 @@ def main():
 
     log(f"Pipeline complete after {format_seconds(perf_counter() - pipeline_start)}")
     print("\nDone.", flush=True)
-    print(f"3D NPZ: {pose3d_npz}", flush=True)
+    print(f"3D NPZ: {viewer_3d_npz}", flush=True)
     print(f"Interactive HTML: {interactive_html}", flush=True)
 
 

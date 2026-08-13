@@ -1,0 +1,38 @@
+{
+  "fps": 30.0,
+  "2d": {
+    "score_threshold": 0.25,
+    "speed_mad_k": 6.0,
+    "max_gap": 8,
+    "repaired_score": 0.4,
+    "one_euro": {
+      "enabled": true,
+      "min_cutoff": 1.0,
+      "beta": 0.007,
+      "dcutoff": 1.0
+    }
+  },
+  "3d": {
+    "smooth": {
+      "enabled": true,
+      "min_cutoff": 1.2,
+      "beta": 0.01,
+      "dcutoff": 1.0
+    },
+    "bone": {
+      "iterations": 3,
+      "length_weight": 0.85,
+      "symmetry_weight": 0.35,
+      "min_reliable_frames": 30,
+      "min_length": 0.001
+    },
+    "angle": {
+      "enabled": true,
+      "weight": 0.6,
+      "knee_min_deg": 25.0,
+      "knee_max_deg": 178.0,
+      "elbow_min_deg": 20.0,
+      "elbow_max_deg": 178.0
+    }
+  }
+}
