@@ -364,6 +364,7 @@ HTML_TEMPLATE = r"""<!doctype html>
     let draggingJoint = null;
     let dragSnapshot = null;
     let timer = null;
+    let videoFrameRequest = null;
     let history = [];
     const edited = frames.map(() => Array(jointNames.length).fill(false));
 
@@ -448,7 +449,10 @@ HTML_TEMPLATE = r"""<!doctype html>
 
     function seekVideo() {
       const t = Math.max(0, frame / fps);
-      if (Math.abs(video.currentTime - t) > 0.035) {
+      // At 60 FPS a frame is only 16.7 ms.  A fixed 35 ms tolerance
+      // skips two adjacent frames and makes the skeleton visibly lag.
+      const tolerance = 1 / Math.max(fps * 4, 1);
+      if (Math.abs(video.currentTime - t) > tolerance) {
         video.currentTime = t;
       }
     }
@@ -486,24 +490,56 @@ HTML_TEMPLATE = r"""<!doctype html>
     }
 
     function pause() {
-      if (timer) clearInterval(timer);
+      if (typeof timer === "number") clearInterval(timer);
+      if (videoFrameRequest !== null && video.cancelVideoFrameCallback) {
+        video.cancelVideoFrameCallback(videoFrameRequest);
+      }
+      videoFrameRequest = null;
+      video.pause();
       timer = null;
       playPause.textContent = "Play";
       stateLabel.textContent = "paused";
     }
 
+    function syncFrameFromVideo(mediaTime) {
+      const nextFrame = Math.max(0, Math.min(lastFrame, Math.round(mediaTime * fps)));
+      if (nextFrame === frame) return;
+      frame = nextFrame;
+      updateJointPanel();
+      updateLabels();
+      draw();
+    }
+
+    function onVideoFrame(_, metadata) {
+      if (!timer) return;
+      syncFrameFromVideo(metadata.mediaTime);
+      if (frame >= lastFrame || video.ended) {
+        pause();
+        return;
+      }
+      videoFrameRequest = video.requestVideoFrameCallback(onVideoFrame);
+    }
+
     function play() {
       if (timer) return;
+      if (frame >= lastFrame) setFrame(0);
       playPause.textContent = "Pause";
       stateLabel.textContent = "playing";
-      const interval = Math.max(16, 1000 / (fps * Number(speed.value)));
-      timer = setInterval(() => {
-        if (frame >= lastFrame) {
-          pause();
+      timer = true;
+      video.playbackRate = Number(speed.value);
+      video.play().then(() => {
+        if (!timer) return;
+        if (video.requestVideoFrameCallback) {
+          videoFrameRequest = video.requestVideoFrameCallback(onVideoFrame);
           return;
         }
-        setFrame(frame + 1);
-      }, interval);
+        // Fallback for older browsers: read the video's actual playhead
+        // instead of seeking it once per skeleton frame.
+        timer = setInterval(() => {
+          syncFrameFromVideo(video.currentTime);
+          if (frame >= lastFrame || video.ended) pause();
+        }, 16);
+      }).catch(() => pause());
     }
 
     function nearestJoint(x, y) {
@@ -803,8 +839,15 @@ HTML_TEMPLATE = r"""<!doctype html>
 
 
 def html_relative_path(path, base_dir):
-    rel_path = os.path.relpath(path.resolve(), base_dir.resolve())
-    return rel_path.replace(os.sep, "/")
+    path = Path(path).resolve()
+    base_dir = Path(base_dir).resolve()
+    try:
+        rel_path = os.path.relpath(path, base_dir)
+        return rel_path.replace(os.sep, "/")
+    except ValueError:
+        # Windows cannot calculate relative paths across drive letters.
+        # A file URI lets an HTML viewer on another drive load the source video.
+        return path.as_uri()
 
 
 def video_meta(video_path):
