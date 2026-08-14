@@ -1,0 +1,17 @@
+{
+  "name": "human17-region-model",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Reusable Three.js capsule-region renderer for Human3.6M Human17 poses.",
+  "scripts": {
+    "build": "esbuild src/index.js --bundle --format=iife --global-name=Human17RegionModel --minify --legal-comments=none --outfile=dist/human17-region-model.js",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "three": "0.180.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.10"
+  }
+}

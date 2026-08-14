@@ -8,6 +8,10 @@ import cv2
 import numpy as np
 
 
+ROOT = Path(__file__).resolve().parents[1]
+REGION_MODEL_BUNDLE = ROOT / "region_model" / "dist" / "human17-region-model.js"
+
+
 H36M_PAIRS = [
     (0, 1),
     (1, 2),
@@ -42,6 +46,14 @@ def to_display_coords(pose):
 def html_relative_dir(path, base_dir):
     rel_path = os.path.relpath(path.resolve(), base_dir.resolve())
     return rel_path.replace(os.sep, "/")
+
+
+def read_region_model_bundle():
+    if not REGION_MODEL_BUNDLE.is_file():
+        raise RuntimeError(
+            "Human17 region-model bundle is missing. Run `npm install` and `npm run build` in region_model/."
+        )
+    return REGION_MODEL_BUNDLE.read_text(encoding="utf-8")
 
 
 def write_image(path, image, quality=90):
@@ -221,6 +233,24 @@ HTML_TEMPLATE = """<!doctype html>
       border-top: 1px solid var(--line);
       background: #15181b;
     }
+    .toggle-control,
+    .range-control {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 34px;
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    .toggle-control input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--accent);
+    }
+    .range-control input[type="range"] {
+      width: 112px;
+    }
     .controls {
       display: grid;
       grid-template-columns: auto auto auto minmax(180px, 1fr) auto auto;
@@ -259,11 +289,50 @@ HTML_TEMPLATE = """<!doctype html>
       font-size: 13px;
     }
     @media (max-width: 980px) {
+      .app { display: block; }
+      header {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .status {
+        flex-wrap: wrap;
+        white-space: normal;
+      }
       main { grid-template-columns: 1fr; }
-      .controls { grid-template-columns: repeat(3, auto); }
+      .viewer { grid-template-rows: auto auto; }
+      .viewer-title {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .image-wrap { aspect-ratio: 16 / 9; }
+      .canvas-wrap { aspect-ratio: 1 / 1; }
+      .view-tools .range-control {
+        flex: 1 1 230px;
+        min-width: 0;
+      }
+      .view-tools .range-control input[type="range"] {
+        flex: 1 1 auto;
+        min-width: 80px;
+      }
+      #angleLabel {
+        flex: 1 0 100%;
+        overflow-wrap: anywhere;
+      }
+      .controls { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .controls button,
+      .controls select {
+        width: 100%;
+        padding-inline: 8px;
+      }
       .controls input[type="range"] { grid-column: 1 / -1; }
+      .frame-box {
+        min-width: 0;
+        grid-column: 2 / -1;
+      }
       img,
-      canvas { max-height: 48vh; }
+      canvas { max-height: none; }
     }
   </style>
 </head>
@@ -300,6 +369,18 @@ HTML_TEMPLATE = """<!doctype html>
           <button id="skeletonSmaller" type="button">Skeleton -</button>
           <button id="zoomIn" type="button">Zoom +</button>
           <button id="zoomOut" type="button">Zoom -</button>
+          <label class="toggle-control" title="Show or hide the capsule region model">
+            <input id="regionToggle" type="checkbox" checked />
+            <span>Region model</span>
+          </label>
+          <label class="toggle-control" title="Show or hide the original Human17 line skeleton">
+            <input id="skeletonToggle" type="checkbox" checked />
+            <span>Skeleton</span>
+          </label>
+          <label class="range-control" title="Adjust capsule and joint thickness">
+            <span>Thickness</span>
+            <input id="regionThickness" type="range" min="0.65" max="1.55" step="0.05" value="1" />
+          </label>
           <span class="hint" id="angleLabel"></span>
         </div>
       </section>
@@ -321,6 +402,10 @@ HTML_TEMPLATE = """<!doctype html>
   </div>
 
   <script>
+__REGION_MODEL_BUNDLE__
+  </script>
+
+  <script>
     const poseData = __POSE_DATA__;
     const pairs = __PAIRS__;
     const boneColors = __BONE_COLORS__;
@@ -331,7 +416,6 @@ HTML_TEMPLATE = """<!doctype html>
     const lastFrame = poseData.length - 1;
 
     const canvas = document.getElementById("scene");
-    const ctx = canvas.getContext("2d");
     const leftImg = document.getElementById("leftImg");
     const playPause = document.getElementById("playPause");
     const prevFrame = document.getElementById("prevFrame");
@@ -342,6 +426,9 @@ HTML_TEMPLATE = """<!doctype html>
     const timeLabel = document.getElementById("timeLabel");
     const stateLabel = document.getElementById("stateLabel");
     const angleLabel = document.getElementById("angleLabel");
+    const regionToggle = document.getElementById("regionToggle");
+    const skeletonToggle = document.getElementById("skeletonToggle");
+    const regionThickness = document.getElementById("regionThickness");
 
     let frame = 0;
     let timer = null;
@@ -352,131 +439,33 @@ HTML_TEMPLATE = """<!doctype html>
     let isDragging = false;
     let lastPointer = { x: 0, y: 0 };
 
+    const regionViewer = Human17RegionModel.createHuman17RegionViewer(canvas, {
+      radius,
+      pairs,
+      boneColors,
+      yaw,
+      pitch,
+      zoom,
+      skeletonScale,
+    });
+    regionViewer.setSequence(poseData);
+
     function padFrame(value) {
       return String(value).padStart(4, "0");
     }
 
     function resizeCanvas() {
-      const rect = canvas.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = Math.max(1, Math.round(rect.width * dpr));
-      canvas.height = Math.max(1, Math.round(rect.height * dpr));
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      drawScene();
-    }
-
-    function rotatePoint(p) {
-      const x = p[0] * skeletonScale;
-      const y = p[1] * skeletonScale;
-      const z = p[2] * skeletonScale;
-      const cy = Math.cos(yaw);
-      const sy = Math.sin(yaw);
-      const cp = Math.cos(pitch);
-      const sp = Math.sin(pitch);
-
-      const x1 = cy * x + sy * y;
-      const y1 = -sy * x + cy * y;
-      const z1 = z;
-      const y2 = cp * y1 - sp * z1;
-      const z2 = sp * y1 + cp * z1;
-      return [x1, y2, z2];
-    }
-
-    function project(p, rect) {
-      const r = rotatePoint(p);
-      const size = Math.min(rect.width, rect.height);
-      const scale = size * 0.38 * zoom / radius;
-      return {
-        x: rect.width / 2 + r[0] * scale,
-        y: rect.height / 2 - r[2] * scale,
-        depth: r[1]
-      };
-    }
-
-    function line3d(a, b, color, width, alpha, rect) {
-      const pa = project(a, rect);
-      const pb = project(b, rect);
-      ctx.save();
-      ctx.globalAlpha = alpha;
-      ctx.strokeStyle = color;
-      ctx.lineWidth = width;
-      ctx.beginPath();
-      ctx.moveTo(pa.x, pa.y);
-      ctx.lineTo(pb.x, pb.y);
-      ctx.stroke();
-      ctx.restore();
-    }
-
-    function drawCube(rect) {
-      const r = radius;
-      const corners = [
-        [-r, -r, -r], [r, -r, -r], [r, r, -r], [-r, r, -r],
-        [-r, -r, r], [r, -r, r], [r, r, r], [-r, r, r]
-      ];
-      const edges = [
-        [0, 1], [1, 2], [2, 3], [3, 0],
-        [4, 5], [5, 6], [6, 7], [7, 4],
-        [0, 4], [1, 5], [2, 6], [3, 7]
-      ];
-      const steps = 8;
-      for (let i = 0; i <= steps; i += 1) {
-        const t = -r + (2 * r * i) / steps;
-        line3d([-r, t, -r], [r, t, -r], "#b6bec6", 0.8, 0.42, rect);
-        line3d([t, -r, -r], [t, r, -r], "#b6bec6", 0.8, 0.42, rect);
-        line3d([-r, r, t], [r, r, t], "#c2c8ce", 0.7, 0.34, rect);
-        line3d([t, r, -r], [t, r, r], "#c2c8ce", 0.7, 0.34, rect);
-        line3d([-r, -r, t], [-r, r, t], "#c2c8ce", 0.7, 0.30, rect);
-        line3d([-r, t, -r], [-r, t, r], "#c2c8ce", 0.7, 0.30, rect);
-      }
-      for (const [a, b] of edges) {
-        line3d(corners[a], corners[b], "#5f6871", 1.6, 0.72, rect);
-      }
-      line3d([0, 0, 0], [r * 0.72, 0, 0], "#ef4444", 2.0, 0.84, rect);
-      line3d([0, 0, 0], [0, r * 0.72, 0], "#2563eb", 2.0, 0.84, rect);
-      line3d([0, 0, 0], [0, 0, r * 0.72], "#16a34a", 2.0, 0.84, rect);
-    }
-
-    function drawText(text, p, color, rect) {
-      const q = project(p, rect);
-      ctx.fillStyle = color;
-      ctx.font = "13px Arial";
-      ctx.fillText(text, q.x + 6, q.y - 6);
+      regionViewer.resize();
     }
 
     function drawScene() {
-      const rect = canvas.getBoundingClientRect();
-      ctx.clearRect(0, 0, rect.width, rect.height);
-      ctx.fillStyle = "#f7f8fa";
-      ctx.fillRect(0, 0, rect.width, rect.height);
-
-      drawCube(rect);
-      const pose = poseData[frame];
-      const boneOrder = pairs.map((pair, index) => {
-        const a = project(pose[pair[0]], rect);
-        const b = project(pose[pair[1]], rect);
-        return { pair, index, depth: (a.depth + b.depth) / 2 };
-      }).sort((a, b) => b.depth - a.depth);
-
-      for (const item of boneOrder) {
-        const [a, b] = item.pair;
-        line3d(pose[a], pose[b], boneColors[item.index], 4, 0.95, rect);
-      }
-      for (const joint of pose) {
-        const q = project(joint, rect);
-        ctx.beginPath();
-        ctx.fillStyle = "#111827";
-        ctx.arc(q.x, q.y, 4.2, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      const root = project(pose[0], rect);
-      ctx.beginPath();
-      ctx.fillStyle = "#f59e0b";
-      ctx.arc(root.x, root.y, 5.5, 0, Math.PI * 2);
-      ctx.fill();
-
-      drawText("X", [radius * 0.82, 0, 0], "#ef4444", rect);
-      drawText("Y", [0, radius * 0.82, 0], "#2563eb", rect);
-      drawText("Z", [0, 0, radius * 0.82], "#16a34a", rect);
+      regionViewer.setView({ yaw, pitch, zoom, skeletonScale }, false);
+      regionViewer.setOptions({
+        regionsVisible: regionToggle.checked,
+        skeletonVisible: skeletonToggle.checked,
+        thickness: Number(regionThickness.value),
+      }, false);
+      regionViewer.setPose(poseData[frame]);
       angleLabel.textContent = `yaw ${(yaw * 180 / Math.PI).toFixed(0)} deg / pitch ${(pitch * 180 / Math.PI).toFixed(0)} deg / zoom ${zoom.toFixed(2)}x / skeleton ${skeletonScale.toFixed(2)}x`;
     }
 
@@ -541,6 +530,9 @@ HTML_TEMPLATE = """<!doctype html>
         play();
       }
     });
+    regionToggle.addEventListener("change", drawScene);
+    skeletonToggle.addEventListener("change", drawScene);
+    regionThickness.addEventListener("input", drawScene);
 
     document.getElementById("viewIso").addEventListener("click", () => setView(-0.86, -0.32, 1.08));
     document.getElementById("viewFront").addEventListener("click", () => setView(0, 0, 1.15));
@@ -681,6 +673,7 @@ def main():
 
     html_text = HTML_TEMPLATE
     html_text = html_text.replace("__TITLE__", html.escape(args.title))
+    html_text = html_text.replace("__REGION_MODEL_BUNDLE__", read_region_model_bundle())
     html_text = html_text.replace("__POSE_DATA__", json.dumps(compact_pose_data(display), separators=(",", ":")))
     html_text = html_text.replace("__PAIRS__", json.dumps(H36M_PAIRS, separators=(",", ":")))
     html_text = html_text.replace("__BONE_COLORS__", json.dumps(build_bone_colors(), separators=(",", ":")))
