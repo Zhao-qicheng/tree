@@ -7,6 +7,8 @@ import glob
 # 添加项目根目录到系统路径
 sys.path.append(str(Path(__file__).parent.parent))
 
+import config
+
 # Human3.6M 骨骼连接关系（父节点 -> 子节点）
 H36M_BONE_PAIRS = [
     (0, 7), (7, 8), (8, 9), (9, 10),  # 躯干: Hip -> Spine -> Chest -> Neck -> Head
@@ -49,5 +51,4 @@ def analyze_skeleton_stats(data_dir):
     return normalized_results
 
 if __name__ == "__main__":
-    test_dir = "c:/Users/86158/Desktop/数据集/FS-Jump3D-main/data/npy"
-    analyze_skeleton_stats(test_dir)
+    analyze_skeleton_stats(config.FS_JUMP3D_DATA_DIR)

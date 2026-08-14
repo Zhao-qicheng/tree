@@ -6,7 +6,7 @@
 
 ## 1. 生成 3D 修正页面
 
-默认参数写在 `scripts/build_3d_pose_editor.py` 顶部。当前默认读取：
+默认视频名由本机 `.env` 中的 `PIPELINE_VIDEO_NAME` 设置。假设该值为 `test1`，默认读取：
 
 - `outputs/processed_3d/test1_ap3d_motionagformer.npz`
 - `outputs/processed_2d/test1_h36m_vis.mp4`
@@ -15,23 +15,19 @@
 运行：
 
 ```powershell
-cd C:\Users\86158\Desktop\八叉树
+# 在项目根目录中运行
 conda activate mmpose
 
 python .\scripts\build_3d_pose_editor.py
 ```
 
-如果要换成另一个视频，可以直接改脚本顶部这些默认值：
+如果要长期切换本机默认视频，修改不提交到 Git 的 `.env`：
 
-```python
-DEFAULT_VIDEO_NAME
-DEFAULT_3D_NPZ
-DEFAULT_LEFT_VIDEO
-DEFAULT_LEFT_FRAME_DIR
-DEFAULT_OUT_HTML
+```dotenv
+PIPELINE_VIDEO_NAME=test2
 ```
 
-也可以临时用命令行指定：
+也可以临时用命令行参数指定输入和输出，不需要修改 Python 文件：
 
 ```powershell
 python .\scripts\build_3d_pose_editor.py `

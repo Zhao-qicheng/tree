@@ -146,8 +146,7 @@ def verify_files(file_a, file_b):
     plot_compare(frame_a_raw, frame_a_retargeted, frame_a_norm)
 
 if __name__ == "__main__":
-    # 直接指定正确的数据根目录
-    base_dir = Path("c:/Users/86158/Desktop/八叉树/data/npy")
+    base_dir = Path(config.FS_JUMP3D_DATA_DIR)
     file_a = base_dir / "Skater_D" / "Axel" / "Axel_2.npy"
     file_b = base_dir / "Skater_B" / "Axel" / "Axel_1.npy"
     

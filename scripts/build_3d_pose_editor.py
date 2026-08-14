@@ -2,6 +2,7 @@ import argparse
 import html
 import json
 import os
+import sys
 from pathlib import Path
 
 import cv2
@@ -9,9 +10,13 @@ import numpy as np
 
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-# Edit these defaults if you prefer running this script without command args.
-DEFAULT_VIDEO_NAME = "test3"
+from project_config import get_setting
+
+
+DEFAULT_VIDEO_NAME = get_setting("PIPELINE_VIDEO_NAME", "test")
 DEFAULT_3D_NPZ = ROOT / "outputs" / "processed_3d" / f"{DEFAULT_VIDEO_NAME}_ap3d_motionagformer.npz"
 DEFAULT_LEFT_VIDEO = ROOT / "outputs" / "processed_2d" / f"{DEFAULT_VIDEO_NAME}_h36m_vis.mp4"
 DEFAULT_LEFT_FRAME_DIR = ROOT / "outputs" / "pose3d_editor_frames" / DEFAULT_VIDEO_NAME

@@ -1,4 +1,4 @@
-_base_ = [r'C:/Users/86158/Desktop/mmpose-main/configs/_base_/default_runtime.py']
+_base_ = ['./_base_/default_runtime.py']
 
 # common setting
 num_keypoints = 17
@@ -240,4 +240,3 @@ test_evaluator = val_evaluator
 # The full RTMPose-x checkpoint is provided by --pose2d-weights.
 # Disable extra backbone pretraining download during inference setup.
 model['backbone']['init_cfg'] = None
-

@@ -14,18 +14,20 @@
 
 如果只是想跑一个完整视频，不需要逐个修改多个 py 文件。推荐使用总入口脚本：
 
+先在项目根目录的 `.env` 中配置每台电脑自己的外部仓库目录。该文件已被 `.gitignore` 忽略，不会在两台电脑之间互相覆盖：
+
+```dotenv
+MMPOSE_ROOT=../mmpose-main
+MOTIONAGFORMER_ROOT=../MotionAGFormer-master
+PIPELINE_VIDEO_NAME=test
+```
+
 ```powershell
-cd C:\Users\86158\Desktop\八叉树
+# 在项目根目录中运行
 conda activate mmpose
 
-$ROOT = "C:\Users\86158\Desktop\八叉树"
-
-python "$ROOT\scripts\run_video_pose_pipeline.py" `
+python .\scripts\run_video_pose_pipeline.py `
   --name test `
-  --video-dir "$ROOT\input_videos\finefs_test" `
-  --mmpose-root "C:\Users\86158\Desktop\mmpose-main" `
-  --motionagformer-root "C:\Users\86158\Desktop\MotionAGFormer-master" `
-  --checkpoint "$ROOT\test\motionagformer-s-ap3d.pth.tr" `
   --fps 30 `
   --device cpu
 ```
@@ -36,32 +38,24 @@ python "$ROOT\scripts\run_video_pose_pipeline.py" `
 input_videos\finefs_test\test.mp4
 ```
 
-如果你想通过改 py 文件来切换测试视频，只需要改：
+如果要切换测试视频，优先使用 `--name`；也可以修改本机 `.env`：
 
-```python
-DEFAULT_VIDEO_NAME = "test"
+```dotenv
+PIPELINE_VIDEO_NAME=test
 ```
 
-文件位置：
-
-```text
-scripts\run_video_pose_pipeline.py
-```
-
-不建议去修改 `select_main_skater_h36m.py`、`lift_2d_to_3d_motionagformer_ap3d.py`、`build_interactive_3d_viewer.py` 里的路径，因为这些是功能脚本，应该保持通用。
+不建议修改任何 Python 文件里的本机路径，因为这些功能脚本应保持通用。
 
 ## 运行一个新视频
 
 在 PowerShell 中进入项目根目录：
 
 ```powershell
-cd C:\Users\86158\Desktop\八叉树
-
-$ROOT = "C:\Users\86158\Desktop\八叉树"
+$ROOT = (Get-Location).Path
 $NAME = "sample2"
 $VIDEO = "$ROOT\input_videos\finefs_test\$NAME.mp4"
-$MMP = "C:\Users\86158\Desktop\mmpose-main"
-$MAG = "C:\Users\86158\Desktop\MotionAGFormer-master"
+$MMP = "<MMPose 仓库目录>"
+$MAG = "<MotionAGFormer 仓库目录>"
 $FPS = 29
 ```
 

@@ -7,10 +7,17 @@ from time import perf_counter
 
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-DEFAULT_VIDEO_NAME = "test3"
-DEFAULT_VIDEO_DIR = ROOT / "input_videos" / "finefs_test"
-DEFAULT_MOTIONAGFORMER_ROOT = Path(r"C:\Users\86158\Desktop\MotionAGFormer-master")
+from project_config import get_path, get_setting
+
+
+DEFAULT_VIDEO_NAME = get_setting("PIPELINE_VIDEO_NAME", "test")
+DEFAULT_VIDEO_DIR = get_path("PIPELINE_VIDEO_DIR", "input_videos/finefs_test")
+DEFAULT_MOTIONAGFORMER_ROOT = get_path(
+    "MOTIONAGFORMER_ROOT", "../MotionAGFormer-master"
+)
 DEFAULT_AP3D_CHECKPOINT = ROOT / "test" / "motionagformer-s-ap3d.pth.tr"
 DEFAULT_CONDA_ENV = "mmpose"
 DEFAULT_DEVICE = "cpu"

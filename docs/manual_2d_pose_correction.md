@@ -7,7 +7,7 @@
 示例：
 
 ```powershell
-cd C:\Users\86158\Desktop\八叉树
+# 在项目根目录中运行
 conda activate mmpose
 
 python .\scripts\build_2d_pose_editor.py `

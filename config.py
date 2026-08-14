@@ -7,42 +7,16 @@
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
 from typing import Dict, Tuple
+
+from project_config import get_path
 
 # ============================================================================
 # 路径解析辅助：自动推导项目根目录，支持 .env 文件覆盖
 # ============================================================================
-# 项目根目录 = config.py 所在目录
-_PROJECT_ROOT = Path(__file__).resolve().parent
-
-def _load_dotenv(env_path: Path) -> None:
-    """极简 .env 解析，无需安装 python-dotenv。
-    只处理 KEY=VALUE 格式，忽略注释行和空行。"""
-    if not env_path.exists():
-        return
-    with open(env_path, encoding='utf-8') as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith('#') or '=' not in line:
-                continue
-            key, _, value = line.partition('=')
-            key = key.strip()
-            value = value.strip().strip('"\'')
-            # 仅在未被系统环境变量覆盖时才设置
-            if key and key not in os.environ:
-                os.environ[key] = value
-
-# 加载 .env 文件（项目根目录下，不提交到 git）
-_load_dotenv(_PROJECT_ROOT / '.env')
-
 def _path(env_key: str, default_relative: str) -> str:
     """从环境变量读取路径，若未设置则使用项目根目录的相对路径作为默认值。"""
-    val = os.environ.get(env_key, '')
-    if val:
-        return val
-    return str(_PROJECT_ROOT / default_relative)
+    return str(get_path(env_key, default_relative))
 
 # ============================================================================
 # 数据源配置
