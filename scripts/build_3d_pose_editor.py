@@ -11,7 +11,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 
 # Edit these defaults if you prefer running this script without command args.
-DEFAULT_VIDEO_NAME = "test1"
+DEFAULT_VIDEO_NAME = "test3"
 DEFAULT_3D_NPZ = ROOT / "outputs" / "processed_3d" / f"{DEFAULT_VIDEO_NAME}_ap3d_motionagformer.npz"
 DEFAULT_LEFT_VIDEO = ROOT / "outputs" / "processed_2d" / f"{DEFAULT_VIDEO_NAME}_h36m_vis.mp4"
 DEFAULT_LEFT_FRAME_DIR = ROOT / "outputs" / "pose3d_editor_frames" / DEFAULT_VIDEO_NAME

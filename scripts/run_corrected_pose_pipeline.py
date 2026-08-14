@@ -8,13 +8,13 @@ from time import perf_counter
 
 ROOT = Path(__file__).resolve().parents[1]
 
-DEFAULT_VIDEO_NAME = "test2"
+DEFAULT_VIDEO_NAME = "test3"
 DEFAULT_VIDEO_DIR = ROOT / "input_videos" / "finefs_test"
 DEFAULT_MOTIONAGFORMER_ROOT = Path(r"C:\Users\86158\Desktop\MotionAGFormer-master")
 DEFAULT_AP3D_CHECKPOINT = ROOT / "test" / "motionagformer-s-ap3d.pth.tr"
 DEFAULT_CONDA_ENV = "mmpose"
 DEFAULT_DEVICE = "cpu"
-DEFAULT_FPS = 30.0
+DEFAULT_FPS = 60.0
 
 
 def log(message):

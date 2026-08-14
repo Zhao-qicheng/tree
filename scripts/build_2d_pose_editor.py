@@ -10,7 +10,7 @@ import cv2
 ROOT = Path(__file__).resolve().parents[1]
 
 # Edit these defaults if you prefer running this script without command args.
-DEFAULT_VIDEO_NAME = "test1"
+DEFAULT_VIDEO_NAME = "test3"
 DEFAULT_VIDEO_DIR = ROOT / "input_videos" / "finefs_test"
 DEFAULT_H36M_JSON = ROOT / "outputs" / "processed_2d" / f"{DEFAULT_VIDEO_NAME}_h36m.json"
 DEFAULT_H36M_NPZ = ROOT / "outputs" / "processed_2d" / f"{DEFAULT_VIDEO_NAME}_h36m.npz"
@@ -448,9 +448,8 @@ HTML_TEMPLATE = r"""<!doctype html>
 
     function seekVideo() {
       const t = Math.max(0, frame / fps);
-      if (Math.abs(video.currentTime - t) > 0.035) {
-        video.currentTime = t;
-      }
+      video.currentTime = t;
+      
     }
 
     function updateJointPanel() {

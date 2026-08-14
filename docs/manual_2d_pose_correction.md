@@ -20,7 +20,7 @@ python .\scripts\build_2d_pose_editor.py `
 打开生成的 HTML 后，可以拖拽关节点。保存时建议保存到：
 
 ```text
-outputs\manual_edits\test2_corrected_h36m.json
+outputs\corrected_json\test2_corrected_h36m.json
 ```
 
 ## 2. 重新生成 3D
