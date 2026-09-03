@@ -96,6 +96,31 @@ def compact_pose_data(poses):
     return rounded.tolist()
 
 
+def compact_extended_payload(poses, valid):
+    poses = np.asarray(poses, dtype=np.float32)
+    valid = np.asarray(valid, dtype=bool)
+    pose_out = []
+    valid_out = []
+    for frame_pose, frame_valid in zip(poses, valid):
+        joints = []
+        flags = []
+        for point, is_valid in zip(frame_pose, frame_valid):
+            if is_valid and np.all(np.isfinite(point)):
+                joints.append([round(float(point[0]), 3), round(float(point[1]), 3), round(float(point[2]), 3)])
+                flags.append(True)
+            else:
+                joints.append(None)
+                flags.append(False)
+        pose_out.append(joints)
+        valid_out.append(flags)
+    return pose_out, valid_out
+
+
+def compact_scores(scores):
+    values = np.nan_to_num(np.asarray(scores, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+    return np.round(np.clip(values, 0.0, 1.0), 3).tolist()
+
+
 def estimate_radius(poses, percentile=99.0, padding=1.25, min_radius=1.0):
     finite_abs = np.abs(poses[np.isfinite(poses)])
     if finite_abs.size == 0:
@@ -377,6 +402,35 @@ HTML_TEMPLATE = """<!doctype html>
             <input id="skeletonToggle" type="checkbox" checked />
             <span>Skeleton</span>
           </label>
+          <label class="toggle-control extended-only" title="Show oriented head, hands and feet from extra keypoints">
+            <input id="extendedToggle" type="checkbox" checked />
+            <span>Extended extras</span>
+          </label>
+          <label class="toggle-control extended-only" title="Show oriented feet">
+            <input id="feetToggle" type="checkbox" checked />
+            <span>Feet</span>
+          </label>
+          <label class="toggle-control extended-only" title="Show simplified hands and fingertips">
+            <input id="handsToggle" type="checkbox" checked />
+            <span>Hands</span>
+          </label>
+          <label class="toggle-control extended-only" title="Show face visor used to read head facing">
+            <input id="faceToggle" type="checkbox" checked />
+            <span>Face</span>
+          </label>
+          <label class="range-control node-overlay-control" title="Show RTMW3D diagnostic points and links">
+            <span>RTMW3D nodes</span>
+            <select id="nodeMode">
+              <option value="hidden">Hidden</option>
+              <option value="selected">Selected 22</option>
+              <option value="full">Full 133</option>
+            </select>
+          </label>
+          <label class="range-control node-overlay-control" title="Minimum RTMW3D confidence">
+            <span>Node confidence</span>
+            <input id="nodeThreshold" type="range" min="0" max="1" step="0.05" value="__NODE_THRESHOLD__" />
+          </label>
+          <span class="hint node-overlay-control" id="nodeCount">RTMW3D nodes: 0</span>
           <label class="range-control" title="Adjust capsule and joint thickness">
             <span>Thickness</span>
             <input id="regionThickness" type="range" min="0.65" max="1.55" step="0.05" value="1" />
@@ -407,6 +461,15 @@ __REGION_MODEL_BUNDLE__
 
   <script>
     const poseData = __POSE_DATA__;
+    const extendedPoseData = __EXTENDED_POSE_DATA__;
+    const extendedValid = __EXTENDED_VALID__;
+    const extendedScores = __EXTENDED_SCORES__;
+    const hasExtended = __HAS_EXTENDED__;
+    const wholebodyPoseData = __WHOLEBODY_POSE_DATA__;
+    const wholebodyValid = __WHOLEBODY_VALID__;
+    const wholebodyScores = __WHOLEBODY_SCORES__;
+    const hasWholebody = __HAS_WHOLEBODY__;
+    const initialNodeMode = "__NODE_MODE__";
     const pairs = __PAIRS__;
     const boneColors = __BONE_COLORS__;
     const leftDir = "__LEFT_DIR__";
@@ -429,6 +492,30 @@ __REGION_MODEL_BUNDLE__
     const regionToggle = document.getElementById("regionToggle");
     const skeletonToggle = document.getElementById("skeletonToggle");
     const regionThickness = document.getElementById("regionThickness");
+    const extendedToggle = document.getElementById("extendedToggle");
+    const feetToggle = document.getElementById("feetToggle");
+    const handsToggle = document.getElementById("handsToggle");
+    const faceToggle = document.getElementById("faceToggle");
+    const nodeMode = document.getElementById("nodeMode");
+    const nodeThreshold = document.getElementById("nodeThreshold");
+    const nodeCount = document.getElementById("nodeCount");
+
+    if (!hasExtended) {
+      document.querySelectorAll(".extended-only").forEach((node) => {
+        node.style.display = "none";
+      });
+    }
+    if (!hasExtended && !hasWholebody) {
+      document.querySelectorAll(".node-overlay-control").forEach((node) => {
+        node.style.display = "none";
+      });
+    }
+    nodeMode.value = initialNodeMode;
+    nodeMode.querySelector('option[value="selected"]').disabled = !hasExtended;
+    nodeMode.querySelector('option[value="full"]').disabled = !hasWholebody;
+    if ((nodeMode.value === "selected" && !hasExtended) || (nodeMode.value === "full" && !hasWholebody)) {
+      nodeMode.value = "hidden";
+    }
 
     let frame = 0;
     let timer = null;
@@ -448,7 +535,8 @@ __REGION_MODEL_BUNDLE__
       zoom,
       skeletonScale,
     });
-    regionViewer.setSequence(poseData);
+    if (hasExtended) regionViewer.setExtendedSequence(extendedPoseData);
+    else regionViewer.setSequence(poseData);
 
     function padFrame(value) {
       return String(value).padStart(4, "0");
@@ -464,8 +552,24 @@ __REGION_MODEL_BUNDLE__
         regionsVisible: regionToggle.checked,
         skeletonVisible: skeletonToggle.checked,
         thickness: Number(regionThickness.value),
+        extendedVisible: !hasExtended || extendedToggle.checked,
+        feetVisible: !hasExtended || feetToggle.checked,
+        handsVisible: !hasExtended || handsToggle.checked,
+        faceMarkersVisible: !hasExtended || faceToggle.checked,
+        nodeMode: nodeMode.value,
+        nodeThreshold: Number(nodeThreshold.value),
       }, false);
-      regionViewer.setPose(poseData[frame]);
+      if (hasExtended) regionViewer.setExtendedPose(extendedPoseData[frame], extendedValid[frame], false);
+      else regionViewer.setPose(poseData[frame], false);
+      const visibleNodes = regionViewer.setNodeOverlayData({
+        selectedPose: hasExtended ? extendedPoseData[frame] : null,
+        selectedValid: hasExtended ? extendedValid[frame] : null,
+        selectedScores: hasExtended ? extendedScores[frame] : null,
+        wholebodyPose: hasWholebody ? wholebodyPoseData[frame] : null,
+        wholebodyValid: hasWholebody ? wholebodyValid[frame] : null,
+        wholebodyScores: hasWholebody ? wholebodyScores[frame] : null,
+      });
+      nodeCount.textContent = `RTMW3D nodes: ${visibleNodes}`;
       angleLabel.textContent = `yaw ${(yaw * 180 / Math.PI).toFixed(0)} deg / pitch ${(pitch * 180 / Math.PI).toFixed(0)} deg / zoom ${zoom.toFixed(2)}x / skeleton ${skeletonScale.toFixed(2)}x`;
     }
 
@@ -533,6 +637,12 @@ __REGION_MODEL_BUNDLE__
     regionToggle.addEventListener("change", drawScene);
     skeletonToggle.addEventListener("change", drawScene);
     regionThickness.addEventListener("input", drawScene);
+    extendedToggle.addEventListener("change", drawScene);
+    feetToggle.addEventListener("change", drawScene);
+    handsToggle.addEventListener("change", drawScene);
+    faceToggle.addEventListener("change", drawScene);
+    nodeMode.addEventListener("change", drawScene);
+    nodeThreshold.addEventListener("input", drawScene);
 
     document.getElementById("viewIso").addEventListener("click", () => setView(-0.86, -0.32, 1.08));
     document.getElementById("viewFront").addEventListener("click", () => setView(0, 0, 1.15));
@@ -629,6 +739,18 @@ def main():
     parser.add_argument("--skeleton-scale", type=float)
     parser.add_argument("--target-body-height-ratio", type=float, default=0.65)
     parser.add_argument("--max-skeleton-scale", type=float, default=4.0)
+    parser.add_argument(
+        "--extended-node-mode",
+        choices=("hidden", "selected", "full"),
+        default="hidden",
+        help="Initial RTMW3D diagnostic-node display mode.",
+    )
+    parser.add_argument(
+        "--node-confidence-threshold",
+        type=float,
+        default=0.25,
+        help="Initial confidence threshold for RTMW3D diagnostic nodes.",
+    )
     args = parser.parse_args()
 
     out_html = Path(args.out_html)
@@ -637,6 +759,51 @@ def main():
     data = np.load(args.input_3d_npz, allow_pickle=True)
     pred3d = data["pred3d_root_relative_image_units"].astype(np.float32)
     display = np.stack([to_display_coords(pose) for pose in pred3d], axis=0)
+    extended_display = None
+    extended_valid = None
+    extended_scores = None
+    wholebody_display = None
+    wholebody_valid = None
+    wholebody_scores = None
+    if "extended_pose_3d" in data.files:
+        extended = np.asarray(data["extended_pose_3d"], dtype=np.float32)
+        if extended.ndim == 3 and extended.shape[1] >= 17:
+            extended_display = np.stack([to_display_coords(pose) for pose in extended], axis=0)
+            if "extended_valid" in data.files:
+                extended_valid = np.asarray(data["extended_valid"], dtype=bool)
+            else:
+                extended_valid = np.all(np.isfinite(extended_display), axis=-1)
+            if "extended_scores" in data.files:
+                extended_scores = np.asarray(data["extended_scores"], dtype=np.float32)
+            else:
+                extended_scores = extended_valid.astype(np.float32)
+            frame_count = min(len(display), len(extended_display))
+            display = display[:frame_count]
+            extended_display = extended_display[:frame_count]
+            extended_valid = extended_valid[:frame_count]
+            extended_scores = extended_scores[:frame_count]
+            display = extended_display[:, :17]
+    if "wholebody_pose_3d_aligned" in data.files:
+        wholebody = np.asarray(data["wholebody_pose_3d_aligned"], dtype=np.float32)
+        if wholebody.ndim == 3 and wholebody.shape[1] == 133:
+            wholebody_display = np.stack([to_display_coords(pose) for pose in wholebody], axis=0)
+            if "wholebody_valid" in data.files:
+                wholebody_valid = np.asarray(data["wholebody_valid"], dtype=bool)
+            else:
+                wholebody_valid = np.all(np.isfinite(wholebody_display), axis=-1)
+            if "wholebody_scores" in data.files:
+                wholebody_scores = np.asarray(data["wholebody_scores"], dtype=np.float32)
+            else:
+                wholebody_scores = wholebody_valid.astype(np.float32)
+            frame_count = min(len(display), len(wholebody_display))
+            display = display[:frame_count]
+            wholebody_display = wholebody_display[:frame_count]
+            wholebody_valid = wholebody_valid[:frame_count]
+            wholebody_scores = wholebody_scores[:frame_count]
+            if extended_display is not None:
+                extended_display = extended_display[:frame_count]
+                extended_valid = extended_valid[:frame_count]
+                extended_scores = extended_scores[:frame_count]
     radius = args.radius
     if radius is None:
         radius = estimate_radius(
@@ -660,6 +827,14 @@ def main():
         if extracted < len(display):
             print(f"warning: extracted {extracted} frames, but 3D data has {len(display)} frames")
             display = display[:extracted]
+            if extended_display is not None:
+                extended_display = extended_display[:extracted]
+                extended_valid = extended_valid[:extracted]
+                extended_scores = extended_scores[:extracted]
+            if wholebody_display is not None:
+                wholebody_display = wholebody_display[:extracted]
+                wholebody_valid = wholebody_valid[:extracted]
+                wholebody_scores = wholebody_scores[:extracted]
     elif args.left_frame_dir:
         left_dir = Path(args.left_frame_dir)
         frame_count = count_frame_files(left_dir)
@@ -668,6 +843,14 @@ def main():
         if frame_count < len(display):
             print(f"warning: left frames={frame_count}, but 3D data has {len(display)} frames")
             display = display[:frame_count]
+            if extended_display is not None:
+                extended_display = extended_display[:frame_count]
+                extended_valid = extended_valid[:frame_count]
+                extended_scores = extended_scores[:frame_count]
+            if wholebody_display is not None:
+                wholebody_display = wholebody_display[:frame_count]
+                wholebody_valid = wholebody_valid[:frame_count]
+                wholebody_scores = wholebody_scores[:frame_count]
     else:
         raise SystemExit("Either --left-video or --left-frame-dir is required")
 
@@ -675,6 +858,52 @@ def main():
     html_text = html_text.replace("__TITLE__", html.escape(args.title))
     html_text = html_text.replace("__REGION_MODEL_BUNDLE__", read_region_model_bundle())
     html_text = html_text.replace("__POSE_DATA__", json.dumps(compact_pose_data(display), separators=(",", ":")))
+    if extended_display is None:
+        html_text = html_text.replace("__HAS_EXTENDED__", "false")
+        html_text = html_text.replace("__EXTENDED_POSE_DATA__", "[]")
+        html_text = html_text.replace("__EXTENDED_VALID__", "[]")
+        html_text = html_text.replace("__EXTENDED_SCORES__", "[]")
+    else:
+        pose_json, valid_json = compact_extended_payload(extended_display, extended_valid)
+        html_text = html_text.replace("__HAS_EXTENDED__", "true")
+        html_text = html_text.replace("__EXTENDED_POSE_DATA__", json.dumps(pose_json, separators=(",", ":")))
+        html_text = html_text.replace("__EXTENDED_VALID__", json.dumps(valid_json, separators=(",", ":")))
+        html_text = html_text.replace(
+            "__EXTENDED_SCORES__",
+            json.dumps(compact_scores(extended_scores), separators=(",", ":")),
+        )
+    if wholebody_display is None:
+        html_text = html_text.replace("__HAS_WHOLEBODY__", "false")
+        html_text = html_text.replace("__WHOLEBODY_POSE_DATA__", "[]")
+        html_text = html_text.replace("__WHOLEBODY_VALID__", "[]")
+        html_text = html_text.replace("__WHOLEBODY_SCORES__", "[]")
+    else:
+        whole_pose_json, whole_valid_json = compact_extended_payload(
+            wholebody_display, wholebody_valid
+        )
+        html_text = html_text.replace("__HAS_WHOLEBODY__", "true")
+        html_text = html_text.replace(
+            "__WHOLEBODY_POSE_DATA__",
+            json.dumps(whole_pose_json, separators=(",", ":")),
+        )
+        html_text = html_text.replace(
+            "__WHOLEBODY_VALID__",
+            json.dumps(whole_valid_json, separators=(",", ":")),
+        )
+        html_text = html_text.replace(
+            "__WHOLEBODY_SCORES__",
+            json.dumps(compact_scores(wholebody_scores), separators=(",", ":")),
+        )
+    node_mode = args.extended_node_mode
+    if node_mode == "selected" and extended_display is None:
+        print("warning: selected RTMW3D nodes requested but extended_pose_3d is unavailable; using hidden")
+        node_mode = "hidden"
+    if node_mode == "full" and wholebody_display is None:
+        print("warning: full RTMW3D nodes requested but aligned WholeBody-133 data is unavailable; using hidden")
+        node_mode = "hidden"
+    html_text = html_text.replace("__NODE_MODE__", node_mode)
+    node_threshold = max(0.0, min(1.0, float(args.node_confidence_threshold)))
+    html_text = html_text.replace("__NODE_THRESHOLD__", f"{node_threshold:.2f}")
     html_text = html_text.replace("__PAIRS__", json.dumps(H36M_PAIRS, separators=(",", ":")))
     html_text = html_text.replace("__BONE_COLORS__", json.dumps(build_bone_colors(), separators=(",", ":")))
     html_text = html_text.replace("__LEFT_DIR__", html_relative_dir(left_dir, out_html.parent))
@@ -684,9 +913,14 @@ def main():
     html_text = html_text.replace("__LAST_FRAME__", str(len(display) - 1))
 
     out_html.write_text(html_text, encoding="utf-8")
+    html_size_mb = len(html_text.encode("utf-8")) / (1024 * 1024)
     print(f"frames: {len(display)}")
     print(f"radius: {radius:.3f}")
     print(f"skeleton scale: {skeleton_scale:.3f}")
+    print(f"RTMW3D node mode: {node_mode}")
+    print(f"HTML size: {html_size_mb:.1f} MB")
+    if html_size_mb > 100:
+        print("warning: full WholeBody data produced a large self-contained HTML; selected mode is recommended for long videos")
     print(f"saved: {out_html}")
 
 

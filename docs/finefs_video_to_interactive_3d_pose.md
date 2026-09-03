@@ -46,6 +46,23 @@ PIPELINE_VIDEO_NAME=test
 
 不建议修改任何 Python 文件里的本机路径，因为这些功能脚本应保持通用。
 
+可选：在 17 点核心骨架上并行融合 RTMW3D 全身扩展点（脚、指尖、面部方向），生成 39 点查看结果。需要本机 MMPose 包含 `projects/rtmpose3d`：
+
+```powershell
+python .\scripts\run_video_pose_pipeline.py `
+  --name test `
+  --fps 60 `
+  --device cuda:0 `
+  --extended-pose
+```
+
+扩展点失败时仍会留下原来的 17 点 NPZ 和交互页面。原始 133 点与融合 39 点分别写入：
+
+```text
+outputs\processed_3d\<name>_wholebody133_raw.npz
+outputs\processed_3d\<name>_h36m17_extended39.npz
+```
+
 ## 运行一个新视频
 
 在 PowerShell 中进入项目根目录：

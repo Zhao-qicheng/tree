@@ -1,0 +1,17 @@
+{
+  "schema_version": "h36m17_extended39_v1",
+  "fps": 60.0,
+  "score_threshold": 0.25,
+  "shared_anchor_min": 6,
+  "residual_threshold": 0.65,
+  "scale_window": 31,
+  "max_gap": 8,
+  "repaired_score": 0.35,
+  "length_clip": [0.25, 2.8],
+  "one_euro": {
+    "enabled": true,
+    "min_cutoff": 1.2,
+    "beta": 0.01,
+    "dcutoff": 1.0
+  }
+}

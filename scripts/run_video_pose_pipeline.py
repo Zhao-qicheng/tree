@@ -34,6 +34,10 @@ DEFAULT_DET_WEIGHTS = (
     / "checkpoints"
     / "rtmdet_m_8xb32-100e_coco-obj365-person-235e8209.pth"
 )
+DEFAULT_RTMW3D_WEIGHTS = (
+    "https://download.openmmlab.com/mmpose/v1/wholebody_3d_keypoint/"
+    "rtmw3d/rtmw3d-l_8xb64_cocktail14-384x288-794dbc78_20240626.pth"
+)
 DEFAULT_FPS = 60
 DEFAULT_DEVICE = "cpu"
 DEFAULT_CONDA_ENV = "mmpose"
@@ -64,6 +68,15 @@ def run_command(cmd, stage_name):
         log(f"Exit code: {exc.returncode}")
         raise
     log(f"DONE {stage_name} after {format_seconds(perf_counter() - start)}")
+
+
+def run_command_optional(cmd, stage_name):
+    try:
+        run_command(cmd, stage_name)
+        return True
+    except subprocess.CalledProcessError:
+        log(f"OPTIONAL STAGE FAILED {stage_name}; continuing without extended pose")
+        return False
 
 
 def python_command(args):
@@ -157,6 +170,31 @@ def parse_args():
         help="Root directory for pipeline outputs. Default: <repo>/outputs. "
         "When skipping a stage, missing inputs are also looked up under <repo>/outputs.",
     )
+    parser.add_argument(
+        "--extended-pose",
+        action="store_true",
+        help="Run optional RTMW3D-133 extras and fuse them onto the H36M-17 core skeleton.",
+    )
+    parser.add_argument("--skip-rtmw3d", action="store_true", help="Reuse existing RTMW3D WholeBody NPZ")
+    parser.add_argument("--rtmw3d-config", default="", help="RTMW3D config path. Default: <mmpose>/projects/rtmpose3d/...")
+    parser.add_argument("--rtmw3d-weights", default=DEFAULT_RTMW3D_WEIGHTS, help="RTMW3D checkpoint path or URL")
+    parser.add_argument(
+        "--extended-config",
+        default=str(ROOT / "configs" / "extended_pose_default.json"),
+        help="JSON config for 17+133 fusion",
+    )
+    parser.add_argument(
+        "--extended-node-mode",
+        choices=("hidden", "selected", "full"),
+        default="hidden",
+        help="Initial RTMW3D node overlay in the generated interactive viewer.",
+    )
+    parser.add_argument(
+        "--node-confidence-threshold",
+        type=float,
+        default=0.25,
+        help="Initial confidence threshold for RTMW3D nodes in the viewer.",
+    )
     return parser.parse_args()
 
 
@@ -200,6 +238,7 @@ def main():
         log(f"2D pose weights: {args.pose2d_weights}")
     log(f"Refine 2D: {args.refine_2d}")
     log(f"Refine 3D: {args.refine_3d}")
+    log(f"Extended pose: {args.extended_pose}")
     if args.pred_json:
         args.skip_mmpose = True
         log(f"Reusing MMPose prediction JSON: {args.pred_json}")
@@ -215,6 +254,12 @@ def main():
     maybe_require_path(det_weights, "Person detector checkpoint")
     if args.refine_2d or args.refine_3d:
         require_file(Path(args.refinement_config), "Pose refinement config")
+    if args.extended_pose:
+        require_file(Path(args.extended_config), "Extended pose fusion config")
+        rtmpose3d_root = mmpose_root / "projects" / "rtmpose3d"
+        require_dir(rtmpose3d_root, "RTMPose3D project")
+        if args.rtmw3d_config:
+            maybe_require_path(args.rtmw3d_config, "RTMW3D config")
 
     mmpose_demo = mmpose_root / "demo" / "inferencer_demo.py"
     mag_config = motionagformer_root / "configs" / "h36m" / "MotionAGFormer-small.yaml"
@@ -270,6 +315,14 @@ def main():
     pose3d_refined_json = processed_3d / f"{output_name}_ap3d_motionagformer_refined.json"
     pose3d_refined_vis = processed_3d / f"{output_name}_ap3d_motionagformer_refined_vis.mp4"
     compare_3d_json = processed_3d / f"{output_name}_ap3d_motionagformer_refine_compare.json"
+    wholebody_npz = processed_3d / f"{output_name}_wholebody133_raw.npz"
+    wholebody_json = processed_3d / f"{output_name}_wholebody133_raw.json"
+    extended_npz = processed_3d / f"{output_name}_h36m17_extended39.npz"
+    extended_json = processed_3d / f"{output_name}_h36m17_extended39.json"
+    if args.skip_rtmw3d:
+        wholebody_npz = resolve_existing(
+            wholebody_npz, default_3d / f"{output_name}_wholebody133_raw.npz", "RTMW3D WholeBody NPZ"
+        )
 
     interactive_dir = output_dir / "interactive_3d"
     interactive_frames = interactive_dir / f"{output_name}_frames_left"
@@ -451,6 +504,65 @@ def main():
     else:
         log("SKIP 3b/4 3D pose constraint refinement")
 
+    if args.extended_pose:
+        rtmw3d_ok = True
+        if not args.skip_rtmw3d:
+            rtmw3d_cmd = py_cmd + [
+                ROOT / "scripts" / "infer_rtmw3d_wholebody.py",
+                "--video",
+                video_path,
+                "--out-npz",
+                wholebody_npz,
+                "--out-json",
+                wholebody_json,
+                "--mmpose-root",
+                mmpose_root,
+                "--det-weights",
+                det_weights,
+                "--h36m-2d-npz",
+                h36m_npz,
+                "--device",
+                args.device,
+                "--rtmw3d-weights",
+                args.rtmw3d_weights,
+                "--resume",
+            ]
+            if args.rtmw3d_config:
+                rtmw3d_cmd += ["--rtmw3d-config", args.rtmw3d_config]
+            if args.det_model:
+                rtmw3d_cmd += ["--det-model", det_model]
+            rtmw3d_ok = run_command_optional(rtmw3d_cmd, "3c/4 RTMW3D whole-body inference")
+        else:
+            log("SKIP 3c/4 RTMW3D whole-body inference")
+        if rtmw3d_ok and wholebody_npz.is_file():
+            fuse_ok = run_command_optional(
+                py_cmd
+                + [
+                    ROOT / "scripts" / "fuse_extended_pose.py",
+                    "--input-3d-npz",
+                    viewer_3d_npz,
+                    "--input-wholebody-npz",
+                    wholebody_npz,
+                    "--out-npz",
+                    extended_npz,
+                    "--out-json",
+                    extended_json,
+                    "--config",
+                    args.extended_config,
+                    "--fps",
+                    str(args.fps),
+                ],
+                "3d/4 H36M-17 + RTMW3D extended fusion",
+            )
+            if fuse_ok and extended_npz.is_file():
+                viewer_3d_npz = extended_npz
+                log(f"Output extended 39-point NPZ: {extended_npz}")
+        else:
+            log("SKIP 3d/4 extended fusion because RTMW3D output is unavailable")
+    else:
+        log("SKIP 3c/4 RTMW3D whole-body inference")
+        log("SKIP 3d/4 H36M-17 + RTMW3D extended fusion")
+
     if not args.skip_viewer:
         run_command(
             py_cmd
@@ -468,6 +580,10 @@ def main():
                 f"{output_name} Interactive 2D / 3D Skeleton",
                 "--fps",
                 str(args.fps),
+                "--extended-node-mode",
+                args.extended_node_mode,
+                "--node-confidence-threshold",
+                str(args.node_confidence_threshold),
             ],
             "4/4 Interactive 3D viewer generation",
         )
