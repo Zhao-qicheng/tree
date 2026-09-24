@@ -4,6 +4,8 @@
 
 第一版还支持可选的 **H36M-17 + 扩展 22 点**（共 39 点）。扩展点来自 RTMW3D COCO-WholeBody 133 点筛选：双脚 6 点、双手指尖 10 点、面部方向 6 点。核心 17 点始终保持 MotionAGFormer 结果，Region Model 用扩展点生成朝向可辨的头、手、脚。
 
+> 请先阅读 [`HANDOFF.md`](./HANDOFF.md)。其中标记了全部相关路径、调用链、数据键、生成物、验证命令、已知环境问题和修改同步清单。
+
 ## 构建
 
 ```powershell
@@ -32,7 +34,7 @@ npm run build
 </script>
 ```
 
-`setSequence()` 从序列中估计一套稳定体段半径。`setPose()` 仍只接受 Human17 的 17 点数组；无效点会隐藏对应部件而不是中断播放。
+`setSequence()` 从序列中估计一套稳定体段半径。`setPose()` 可接受 Human17 的 17 点数组，也会把 39 点数组自动转交给 `setExtendedPose()`；无效点会隐藏对应部件而不是中断播放。
 
 如果有融合后的 39 点：
 
@@ -57,7 +59,7 @@ viewer.setOptions({
 - 23–32：左/右 拇指、食指、中指、无名指、小指指尖
 - 33–38：左眼、右眼、左耳、右耳、鼻尖、嘴部中心
 
-融合结果写入独立 NPZ：`core_pose_3d`、`extended_pose_3d`、`extended_scores`、`extended_valid`，同时保留原来的 `pred3d_root_relative_image_units`，旧查看器和检索流程可继续只读 17 点。
+融合结果写入独立的 NPZ 超集文件：保留源 3D NPZ 的字段，并追加 `core_pose_3d`、`extended_pose_3d`、`extended_scores`、`extended_valid`、对齐后的 WholeBody-133 数据和诊断元数据。`pred3d_root_relative_image_units` 会保持为核心 17 点，旧查看器和检索流程可继续只读 17 点。
 
 ## 流水线
 
